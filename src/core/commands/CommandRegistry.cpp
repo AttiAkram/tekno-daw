@@ -68,7 +68,11 @@ juce::String CommandRegistry::validate (const CommandDefinition& definition, con
     for (const auto& param : definition.params)
     {
         if (! args.contains (param.name))
+        {
+            if (param.optional)
+                continue;
             return "missing argument '" + param.name + "' for " + definition.id;
+        }
 
         const auto& value = args[param.name];
         using Type = CommandParam::Type;
@@ -113,6 +117,7 @@ CommandOutcome CommandRegistry::execute (const juce::String& id, const CommandAr
         return CommandOutcome::fail (error);
 
     auto outcome = definition->run (args);
+    const auto& recorded = outcome.resolvedArgs.isEmpty() ? args : outcome.resolvedArgs;
 
     if (outcome.succeeded() && outcome.undo != nullptr)
     {
@@ -120,9 +125,10 @@ CommandOutcome CommandRegistry::execute (const juce::String& id, const CommandAr
         const auto mergeWithLast = definition->coalesce && gesture != 0 && ! undoStack.empty() &&
                                    undoStack.back().id == id && undoStack.back().gesture == gesture;
         if (mergeWithLast)
-            undoStack.back().args = args; // keep the first undo (the value before the gesture); redo goes to the latest
+            undoStack.back().args =
+                recorded; // keep the first undo (the value before the gesture); redo goes to the latest
         else
-            pushUndo ({ id, args, outcome.undo, gesture });
+            pushUndo ({ id, recorded, outcome.undo, gesture });
         redoStack.clear(); // a new action makes the old future unreachable
     }
     if (outcome.succeeded())

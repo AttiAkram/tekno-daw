@@ -4,13 +4,17 @@ configure_file(BuildInfo.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/core/BuildI
 
 add_library(tekno_core STATIC
     Version.cpp
+    model/Channel.cpp
     model/NoteNames.cpp
     model/Pattern.cpp
+    model/SampleLibrary.cpp
     model/Session.cpp
     commands/CommandLine.cpp
     commands/CommandRegistry.cpp
     commands/SessionCommands.cpp
     dsp/AcidVoice.cpp
+    dsp/BuiltinKit.cpp
+    dsp/Sampler.cpp
     engine/AudioEngine.cpp
     engine/OfflineRender.cpp
     io/ProjectFile.cpp)

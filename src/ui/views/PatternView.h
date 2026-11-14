@@ -32,11 +32,12 @@ struct AudioStatus
     juce::String problem; // why there is no audio, when not running
 };
 
-/** The main screen: transport, project, the 303's controls, the pattern bank and the step grid.
+/** The main screen: transport, project, the selected channel's controls, the pattern bank and the
+    channel rack (one row of steps per channel, 16 steps per page).
 
-    The view never changes the model directly: every edit is a command (ADR 0014), and file dialogs go
+    The view never changes the model directly: every edit is a command, and file dialogs go
     through ProjectActions. It reads the shared Session (atomics) on a timer, so what it shows is what
-    the audio thread is playing. */
+    the audio thread is playing. Edits name their target channel explicitly. */
 class PatternView final : public juce::Component, private juce::Timer
 {
 public:
@@ -55,23 +56,39 @@ public:
     /** Opens the terminal and runs each line as if typed (used by --run). */
     void runInTerminal (const juce::StringArray& lines);
 
-    static constexpr int stepsPerRow = 16;
-    static constexpr int maxRows = core::Pattern::maxSteps / stepsPerRow;
+    static constexpr int stepsPerPage = 16;
+    static constexpr int maxPages = core::Pattern::maxSteps / stepsPerPage;
+    static constexpr int maxChannels = core::Session::maxChannels;
 
 private:
+    /** A knob bound to a parameter of the selected channel. */
     struct Knob
     {
+        enum class Group
+        {
+            acid,
+            sampler,
+            mixer, // every channel has these
+        };
+
         const char* label;
         const char* command;
-        std::atomic<float>* value;
-        float defaultValue;
+        const char* argument;
+        double min, max, defaultValue;
+        Group group;
+        std::function<float (const core::Channel&)> read;
         juce::Slider slider;
     };
 
     /** Everything on screen that comes from the Session, to repaint only when something changed. */
     struct Snapshot
     {
-        std::array<std::uint32_t, core::Pattern::maxSteps> steps {};
+        std::array<std::array<std::uint32_t, core::Pattern::maxSteps>, maxChannels> steps {};
+        std::array<juce::String, maxChannels> channelNames;
+        int channels = 0;
+        int selectedChannel = 0;
+        std::uint32_t samplers = 0, muted = 0, soloed = 0; // a bit per channel
+        juce::String sampleName;                           // of the selected channel, when it is a sampler
         int length = 0;
         int selected = 0;
         int playingPattern = 0;
@@ -84,23 +101,45 @@ private:
         juce::String patternName, documentTitle;
 
         bool operator== (const Snapshot&) const = default;
+        bool isSampler (int channel) const noexcept { return ((samplers >> channel) & 1u) != 0; }
+    };
+
+    /** Where something on the rack is: a step, a channel pill, or its mute/solo box. */
+    struct RackHit
+    {
+        enum class What
+        {
+            nothing,
+            step,
+            pill,
+            mute,
+            solo,
+        };
+        What what = What::nothing;
+        int channel = -1;
+        int step = -1; // absolute step index, for What::step
     };
 
     void timerCallback() override;
     Snapshot takeSnapshot() const;
     void run (const juce::String& command, const core::CommandArgs& args = {});
-    int stepAt (juce::Point<float> position) const;
+    RackHit rackAt (juce::Point<float> position) const;
     int patternChipAt (juce::Point<float> position) const;
     void selectPattern (int index);
+    void selectChannel (int index);
+    void showPage (int page);
     void startRename();
     void finishRename (bool keep);
-    void layoutSteps();
+    void layoutRack();
+    void layoutKnobs();
     void toggleTerminal();
+    bool knobVisible (const Knob& knob) const;
 
     void paintTopBar (juce::Graphics&) const;
     void paintLeftColumn (juce::Graphics&) const;
     void paintContent (juce::Graphics&) const;
-    void paintStep (juce::Graphics&, int index) const;
+    void paintRow (juce::Graphics&, int channel) const;
+    void paintStep (juce::Graphics&, int channel, int column) const;
     void paintBadge (juce::Graphics&, juce::Rectangle<float> area, bool ok, const juce::String& letter) const;
     void drawText (juce::Graphics&, const juce::String& text, const tokens::TextStyle& style, juce::Colour colour,
                    juce::Rectangle<float> area,
@@ -116,25 +155,35 @@ private:
     ValueChip swingChip, bpmChip, lengthChip;
     juce::TextButton playButton { "play" };
     juce::TextButton waveButton { "saw" };
+    juce::TextButton sampleButton { "load" };
     juce::TextButton newButton { "new" }, openButton { "open" }, saveButton { "save" };
     juce::TextEditor renameEditor;
-    std::array<Knob, 6> knobs;
+    std::array<Knob, 11> knobs;
     Terminal terminal;
     bool terminalOpen = false;
 
     Snapshot shown;
     AudioStatus shownAudio;
-    int hoveredStep = -1;
+    RackHit hovered;
+    int page = 0; // which 16 steps of the pattern the rack shows
     int timerTicks = 0;
 
     // Layout, computed in resized()
     juce::Rectangle<float> topBar, leftColumn, content;
-    juce::Rectangle<float> projectArea, synthArea, keysArea, audioArea;
-    juce::Rectangle<float> titleArea, metaArea, dividerArea, patternBarArea, gridArea, beatLabelArea, chipArea;
+    juce::Rectangle<float> projectArea, synthArea, keysArea, audioArea, sampleNameArea;
+    juce::Rectangle<float> titleArea, metaArea, dividerArea, patternBarArea, gridArea, beatLabelArea, pageLabelArea;
     juce::Rectangle<float> terminalArea;
     std::array<juce::Rectangle<float>, core::Session::maxPatterns> patternChips;
-    std::array<juce::Rectangle<float>, core::Pattern::maxSteps> stepAreas;
-    int laidOutLength = -1;
+    std::array<juce::Rectangle<float>, stepsPerPage> columns; // x and width of each step column
+    struct RowLayout
+    {
+        juce::Rectangle<float> pill, mute, solo;
+        float stepY = 0.0f;
+    };
+    std::array<RowLayout, maxChannels> rows;
+    float stepSize = 0.0f;
+    int laidOutChannels = -1;
+    std::uint32_t laidOutSamplers = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PatternView)
 };

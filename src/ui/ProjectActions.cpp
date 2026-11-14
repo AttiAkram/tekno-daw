@@ -96,8 +96,30 @@ void ProjectActions::openProject()
                                           commands.execute ("project.open", { { "path", file.getFullPathName() } });
                                       if (! outcome.succeeded())
                                           showError ("Could not open the project", outcome.error);
+                                      else if (outcome.note.isNotEmpty())
+                                          showError ("Opened, but something is missing", outcome.note);
                                   });
         });
+}
+
+void ProjectActions::chooseSample (int channel)
+{
+    const auto current = session.project.channelSamples[static_cast<size_t> (std::clamp (channel, 0, 15))];
+    const auto start = current.isNotEmpty() && juce::File::isAbsolutePath (current)
+                           ? juce::File (current).getParentDirectory()
+                           : defaultFolder();
+    chooser = std::make_unique<juce::FileChooser> ("Load a sample", start, "*.wav;*.aif;*.aiff;*.flac;*.ogg");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this, channel] (const juce::FileChooser& fc)
+                          {
+                              const auto file = fc.getResult();
+                              if (file == juce::File())
+                                  return; // cancelled
+                              const auto outcome = commands.execute (
+                                  "sampler.load", { { "sample", file.getFullPathName() }, { "channel", channel + 1 } });
+                              if (! outcome.succeeded())
+                                  showError ("Could not load the sample", outcome.error);
+                          });
 }
 
 void ProjectActions::save (std::function<void()> afterSaving)

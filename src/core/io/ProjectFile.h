@@ -23,13 +23,17 @@ namespace project
 {
     inline constexpr const char* extension = ".tekno";
     inline constexpr const char* formatId = "tekno-daw/project";
-    inline constexpr int formatVersion = 1;
+    inline constexpr int formatVersion = 2; // 1 = M2, one acid line; still read
 
-    /** The project as text. Deterministic: the same session always gives the same bytes. */
-    juce::String toText (const Session& session);
+    /** The project as text. Deterministic: the same session always gives the same bytes. Sample files
+        inside `projectFolder` are written relative to it, so a project folder can be moved whole. */
+    juce::String toText (const Session& session, const juce::File& projectFolder = {});
 
-    /** Replaces the session's content with the project in `text`. On error the session is unchanged. */
-    juce::Result fromText (const juce::String& text, Session& session);
+    /** Replaces the session's content with the project in `text`. On error the session is unchanged.
+        A missing sample is not an error: the channel stays silent and session.project.warnings says
+        so. Relative sample paths are resolved against `projectFolder` (default: the working
+        folder). */
+    juce::Result fromText (const juce::String& text, Session& session, const juce::File& projectFolder = {});
 
     /** Writes through a temporary file, so a crash or a full disk can't leave half a project behind. */
     juce::Result save (const Session& session, const juce::File& file);

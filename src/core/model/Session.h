@@ -15,7 +15,9 @@
 
 #include <juce_core/juce_core.h>
 
+#include "core/model/Channel.h"
 #include "core/model/Pattern.h"
+#include "core/model/SampleLibrary.h"
 
 namespace tekno::core
 {
@@ -37,25 +39,24 @@ struct TransportState
     std::atomic<int> currentStep { -1 }; // the step being played, -1 when stopped
 };
 
-/** The acid synth's controls, normalised to 0..1. The voice maps them to Hz, seconds, gain. */
-struct AcidParams
+/** The master bus. Volume written by commands; peaks by the audio thread (the GUI takes them with
+    exchange (0)). */
+struct MasterState
 {
-    static constexpr float defaultCutoff = 0.35f;
-    static constexpr float defaultResonance = 0.8f;
-    static constexpr float defaultEnvMod = 0.6f;
-    static constexpr float defaultDecay = 0.45f;
-    static constexpr float defaultAccent = 0.7f;
-    static constexpr float defaultDrive = 0.0f;
+    std::atomic<float> volumeDb { 0.0f };
+    std::atomic<float> peakLeft { 0.0f }, peakRight { 0.0f };
+};
 
-    std::atomic<float> cutoff { defaultCutoff };
-    std::atomic<float> resonance { defaultResonance };
-    std::atomic<float> envMod { defaultEnvMod };
-    std::atomic<float> decay { defaultDecay };
-    std::atomic<float> accent { defaultAccent };
-    std::atomic<float> drive { defaultDrive };
-    std::atomic<bool> square { false }; // false = saw
-
-    void reset() noexcept;
+/** A whole channel as plain values: what a file holds, what undo keeps of a removed channel. */
+struct ChannelData
+{
+    InstrumentKind kind = InstrumentKind::acid;
+    juce::String name;
+    juce::String sample; // origin: "builtin:kick", an absolute path, or empty
+    AcidSettings acid;
+    SamplerSettings sampler;
+    MixerSettings mixer;
+    std::array<std::array<Step, Pattern::maxSteps>, 16> lanes {}; // [pattern][step]
 };
 
 /** Facts about the project as a document. Message thread only: the audio thread never touches it. */
@@ -65,45 +66,103 @@ struct ProjectInfo
     std::uint64_t revision = 0;      // bumped by every change that would be saved
     std::uint64_t savedRevision = 0; // revision at the last save or open
     std::array<juce::String, 16> patternNames;
+    std::array<juce::String, 16> channelNames;
+    std::array<juce::String, 16> channelSamples; // origin of each channel's sample, kept even if missing
+    juce::StringArray warnings;                  // from the last open: missing samples and the like
 
     bool hasUnsavedChanges() const noexcept { return revision != savedRevision; }
 };
 
 /** Everything the running DAW is playing, shared between the message thread and the audio thread.
-    Only commands write to it (ADR 0014); the audio thread only reads it, except where noted. */
+    Only commands write to it; the audio thread only reads it, except where noted.
+
+    Channels: up to 16 preallocated slots, the first `channelCount` in use. Every pattern
+    has one lane per slot. Adding or removing a channel never allocates. */
 class Session
 {
 public:
     static constexpr int maxPatterns = 16;
+    static constexpr int maxChannels = Pattern::maxLanes;
 
     Session();
 
-    /** A new project: one acid line in pattern 1, everything else empty. */
+    /** A new project: a kit (kick, hat, open hat, clap) and an acid channel, with a loop in pattern 1. */
     void loadDefaultProject();
 
-    Pattern& pattern (int index) noexcept
-    {
-        return patterns[static_cast<size_t> (std::clamp (index, 0, maxPatterns - 1))];
-    }
-    const Pattern& pattern (int index) const noexcept
-    {
-        return patterns[static_cast<size_t> (std::clamp (index, 0, maxPatterns - 1))];
-    }
+    /** No channels, empty patterns, default tempo: the starting point for opening a file. */
+    void clearProject();
+
+    // --- patterns ---------------------------------------------------------------------------------
+    Pattern& pattern (int index) noexcept { return patterns[patternSlot (index)]; }
+    const Pattern& pattern (int index) const noexcept { return patterns[patternSlot (index)]; }
     Pattern& selectedPattern() noexcept { return pattern (selected.load()); }
     const Pattern& selectedPattern() const noexcept { return pattern (selected.load()); }
 
     static juce::String defaultPatternName (int index) { return "pattern " + juce::String (index + 1); }
 
+    // --- channels ---------------------------------------------------------------------------------
+    int channelCount() const noexcept { return numChannels.load(); }
+    Channel& channel (int index) noexcept { return channels[channelSlot (index)]; }
+    const Channel& channel (int index) const noexcept { return channels[channelSlot (index)]; }
+    Channel& selectedChannelRef() noexcept { return channel (selectedChannel.load()); }
+
+    /** Adds a channel at the end with default settings and empty lanes. Returns its index, or -1 when
+        all 16 are in use. Message thread. */
+    int addChannel (InstrumentKind kind, const juce::String& name);
+
+    /** Puts a whole channel at `index`, moving the later ones one place down. False when full. If its
+        sample can't be found the channel is silent and `warning` says why. Message thread. */
+    bool insertChannel (int index, const ChannelData& data, juce::String* warning = nullptr);
+
+    /** Removes a channel; the later ones move one place up. Message thread. */
+    void removeChannel (int index);
+
+    /** A copy of everything about a channel, lanes of every pattern included. Message thread. */
+    ChannelData captureChannel (int index) const;
+
+    /** Points a sampler channel at a sample ("builtin:kick" or an absolute path; empty = none).
+        Returns an error, or an empty string. The channel keeps the origin even when it fails, so a
+        missing file is not forgotten when the project is saved again. Message thread. */
+    juce::String setChannelSample (int index, const juce::String& origin);
+
+    /** Frees samples no channel uses any more, once the audio thread can't be reading them. */
+    void collectSampleGarbage();
+
+    // --- state --------------------------------------------------------------------------------------
     TransportState transport;
-    AcidParams synth;
+    MasterState master;
     std::array<Pattern, maxPatterns> patterns;
 
-    std::atomic<int> selected { 0 }; // the pattern being edited; playback switches to it at the next wrap
-    std::atomic<int> playing { 0 };  // the pattern being played: written by the audio thread
+    std::atomic<int> selected { 0 };        // the pattern being edited; playback switches to it at the next wrap
+    std::atomic<int> playing { 0 };         // the pattern being played: written by the audio thread
+    std::atomic<int> selectedChannel { 0 }; // the channel the step grid, knobs and terminal act on
 
-    ProjectInfo project; // message thread only
+    /** Counted by the audio thread at the end of every render(): tells the message thread when an
+        old sample can no longer be in use. */
+    std::atomic<std::uint64_t> audioBlocks { 0 };
+
+    ProjectInfo project;   // message thread only
+    SampleLibrary samples; // message thread only
 
     static_assert (std::atomic<double>::is_always_lock_free);
     static_assert (std::atomic<float>::is_always_lock_free);
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free);
+
+private:
+    static size_t patternSlot (int index) noexcept
+    {
+        return static_cast<size_t> (std::clamp (index, 0, maxPatterns - 1));
+    }
+    static size_t channelSlot (int index) noexcept
+    {
+        return static_cast<size_t> (std::clamp (index, 0, maxChannels - 1));
+    }
+
+    /** Writes a channel's values into slot `index` (does not change channelCount). */
+    juce::String writeChannel (int index, const ChannelData& data);
+    void clearChannelSlot (int index);
+
+    std::array<Channel, maxChannels> channels;
+    std::atomic<int> numChannels { 0 };
 };
 } // namespace tekno::core

@@ -106,6 +106,8 @@ void Terminal::runLine (const juce::String& raw)
     const auto outcome = commands.execute (parsed.command->id, parsed.command->args);
     if (! outcome.succeeded())
         print (outcome.error, Kind::error);
+    else if (outcome.note.isNotEmpty())
+        print (outcome.note, Kind::output);
     if (onCommandRun)
         onCommandRun();
 }

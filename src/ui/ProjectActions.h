@@ -27,6 +27,9 @@ public:
 
     void newProject();
     void openProject();
+
+    /** Asks for an audio file and loads it into a sampler channel (0-based). */
+    void chooseSample (int channel);
     void save (std::function<void()> afterSaving = {});
     void saveAs (std::function<void()> afterSaving = {});
 

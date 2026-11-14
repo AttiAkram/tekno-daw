@@ -8,34 +8,101 @@
 
 #include "core/engine/AudioEngine.h"
 
+#include <cmath>
+
 namespace tekno::core
 {
+namespace
+{
+    constexpr auto relaxed = std::memory_order_relaxed;
+
+    dsp::AcidVoice::Controls controlsOf (const AcidSettings& s) noexcept
+    {
+        dsp::AcidVoice::Controls c;
+        c.cutoff = s.cutoff;
+        c.resonance = s.resonance;
+        c.envMod = s.envMod;
+        c.decay = s.decay;
+        c.accent = s.accent;
+        c.square = s.square;
+        c.drive = s.drive;
+        return c;
+    }
+
+    /** Raises a meter to `value` if it is louder. The GUI resets it with exchange (0). */
+    void raisePeak (std::atomic<float>& meter, float value) noexcept
+    {
+        auto current = meter.load (relaxed);
+        while (value > current && ! meter.compare_exchange_weak (current, value, relaxed))
+        {
+        }
+    }
+} // namespace
+
 AudioEngine::AudioEngine (Session& sessionToPlay)
     : session (sessionToPlay)
 {
     prepare (sampleRate);
 }
 
+float AudioEngine::volumeGain (float volumeDb) noexcept
+{
+    if (volumeDb <= MixerSettings::minVolumeDb)
+        return 0.0f;
+    return std::pow (10.0f, volumeDb / 20.0f);
+}
+
+std::pair<float, float> AudioEngine::panGains (float pan) noexcept
+{
+    const auto angle = (std::clamp (pan, -1.0f, 1.0f) + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+    return { std::cos (angle) * juce::MathConstants<float>::sqrt2,
+             std::sin (angle) * juce::MathConstants<float>::sqrt2 };
+}
+
 void AudioEngine::prepare (double newSampleRate) noexcept
 {
     sampleRate = newSampleRate > 0.0 ? newSampleRate : 48000.0;
-    voice.setControls (readControls());
-    voice.prepare (sampleRate);
+    for (auto& p : players)
+    {
+        p.acid.prepare (sampleRate);
+        p.sampler.prepare (sampleRate);
+        p.generation = ~0u; // force a full sync on the first block
+        p.lastStep = {};
+        p.holdGate = p.gateReleased = false;
+        p.gainLeft = p.gainRight = 0.0f;
+    }
     wasPlaying = false;
     step = -1;
-    lastStep = {};
     samplesIntoStep = 0.0;
     currentStepLength = 0.0;
-    holdGate = gateReleased = false;
+    masterGain = volumeGain (session.master.volumeDb.load (relaxed));
     session.transport.currentStep.store (-1);
 }
 
-dsp::AcidVoice::Controls AudioEngine::readControls() const noexcept
+void AudioEngine::syncPlayer (ChannelPlayer& player, const Channel& channel) noexcept
 {
-    const auto& p = session.synth;
-    constexpr auto relaxed = std::memory_order_relaxed;
-    return { p.cutoff.load (relaxed), p.resonance.load (relaxed), p.envMod.load (relaxed), p.decay.load (relaxed),
-             p.accent.load (relaxed), p.square.load (relaxed),    p.drive.load (relaxed) };
+    const auto generation = channel.generation.load (std::memory_order_acquire);
+    const auto kind = channel.kind.load (relaxed);
+    if (generation != player.generation || kind != player.kind)
+    {
+        // Another channel now lives in this slot: start from silence.
+        player.generation = generation;
+        player.kind = kind;
+        player.acid.reset();
+        player.sampler.reset();
+        player.lastStep = {};
+        player.holdGate = false;
+        player.gateReleased = true;
+        player.gainLeft = player.gainRight = 0.0f;
+    }
+
+    if (kind == InstrumentKind::acid)
+        player.acid.setControls (controlsOf (channel.acid.load()));
+    else
+    {
+        player.sampler.setSettings (channel.sampler.load());
+        player.sampler.setSample (channel.sample.load (std::memory_order_acquire));
+    }
 }
 
 void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples) noexcept
@@ -43,27 +110,49 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
     const juce::ScopedNoDenormals noDenormals;
     auto& transport = session.transport;
 
-    const auto playing = transport.playing.load (std::memory_order_relaxed);
-    const auto bpm =
-        std::clamp (transport.bpm.load (std::memory_order_relaxed), TransportState::minBpm, TransportState::maxBpm);
+    const auto playing = transport.playing.load (relaxed);
+    const auto bpm = std::clamp (transport.bpm.load (relaxed), TransportState::minBpm, TransportState::maxBpm);
     const auto straightLength = samplesPerStep (sampleRate, bpm);
+    const auto channels = std::clamp (session.channelCount(), 0, Session::maxChannels);
 
-    voice.setControls (readControls());
+    // Once per block: each channel's settings, sample and target gains.
+    bool anySolo = false;
+    for (int c = 0; c < channels; ++c)
+        anySolo = anySolo || session.channel (c).mixer.solo.load (relaxed);
+
+    std::array<float, Session::maxChannels> targetLeft {}, targetRight {}, peaks {};
+    for (int c = 0; c < channels; ++c)
+    {
+        const auto& channel = session.channel (c);
+        syncPlayer (players[static_cast<size_t> (c)], channel);
+        const auto mix = channel.mixer.load();
+        const auto audible = ! mix.mute && (! anySolo || mix.solo);
+        const auto gain = audible ? volumeGain (mix.volumeDb) : 0.0f;
+        const auto [left, right] = panGains (mix.pan);
+        targetLeft[static_cast<size_t> (c)] = gain * left;
+        targetRight[static_cast<size_t> (c)] = gain * right;
+    }
+    const auto masterTarget = volumeGain (session.master.volumeDb.load (relaxed));
 
     if (playing && ! wasPlaying)
     {
         step = -1;
-        lastStep = {};
+        for (auto& p : players)
+            p.lastStep = {};
         currentStepLength = 0.0;
         samplesIntoStep = 0.0; // the very first sample starts step 0
     }
     else if (! playing && wasPlaying)
     {
-        voice.gateOff();
+        for (auto& p : players)
+            p.acid.gateOff(); // samplers ring out: a one-shot is not cut by stop
         step = -1;
-        transport.currentStep.store (-1, std::memory_order_relaxed);
+        transport.currentStep.store (-1, relaxed);
     }
     wasPlaying = playing;
+
+    float masterPeakLeft = 0.0f, masterPeakRight = 0.0f;
+    const auto rampStep = 1.0f / static_cast<float> (std::max (1, numSamples));
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -72,48 +161,123 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
             if (samplesIntoStep >= currentStepLength)
             {
                 samplesIntoStep = std::max (0.0, samplesIntoStep - currentStepLength);
-                startStep (step + 1, straightLength);
+                startStep (step + 1, straightLength, channels);
                 if (samplesIntoStep >= currentStepLength) // tempo jumped up a lot: don't fire twice in a row
                     samplesIntoStep = 0.0;
             }
 
-            if (! gateReleased && ! holdGate && samplesIntoStep >= currentStepLength * gateLength)
+            const auto gateEnd = currentStepLength * gateLength;
+            for (int c = 0; c < channels; ++c)
             {
-                voice.gateOff();
-                gateReleased = true;
+                auto& p = players[static_cast<size_t> (c)];
+                if (p.kind == InstrumentKind::acid && ! p.gateReleased && ! p.holdGate && samplesIntoStep >= gateEnd)
+                {
+                    p.acid.gateOff();
+                    p.gateReleased = true;
+                }
             }
             samplesIntoStep += 1.0;
         }
 
-        const auto sample = voice.process();
-        for (int ch = 0; ch < numOutputs; ++ch)
-            if (outputs[ch] != nullptr)
-                outputs[ch][i] = sample;
+        const auto ramp = static_cast<float> (i + 1) * rampStep;
+        float left = 0.0f, right = 0.0f;
+        for (int c = 0; c < channels; ++c)
+        {
+            const auto slot = static_cast<size_t> (c);
+            auto& p = players[slot];
+            float l = 0.0f, r = 0.0f;
+            if (p.kind == InstrumentKind::acid)
+                l = r = p.acid.process();
+            else
+                p.sampler.process (l, r);
+
+            l *= p.gainLeft + (targetLeft[slot] - p.gainLeft) * ramp;
+            r *= p.gainRight + (targetRight[slot] - p.gainRight) * ramp;
+            peaks[slot] = std::max (peaks[slot], std::max (std::abs (l), std::abs (r)));
+            left += l;
+            right += r;
+        }
+
+        const auto master = masterGain + (masterTarget - masterGain) * ramp;
+        left *= master;
+        right *= master;
+        masterPeakLeft = std::max (masterPeakLeft, std::abs (left));
+        masterPeakRight = std::max (masterPeakRight, std::abs (right));
+
+        if (numOutputs == 1)
+        {
+            if (outputs[0] != nullptr)
+                outputs[0][i] = (left + right) * 0.5f;
+        }
+        else
+            for (int ch = 0; ch < numOutputs; ++ch)
+                if (outputs[ch] != nullptr)
+                    outputs[ch][i] = ch == 0 ? left : (ch == 1 ? right : 0.0f);
     }
+
+    for (int c = 0; c < channels; ++c)
+    {
+        const auto slot = static_cast<size_t> (c);
+        players[slot].gainLeft = targetLeft[slot];
+        players[slot].gainRight = targetRight[slot];
+        raisePeak (session.channel (c).peak, peaks[slot]);
+    }
+    masterGain = masterTarget;
+    raisePeak (session.master.peakLeft, masterPeakLeft);
+    raisePeak (session.master.peakRight, masterPeakRight);
+
+    session.audioBlocks.fetch_add (1, std::memory_order_release);
 }
 
-void AudioEngine::startStep (int index, double straightLength) noexcept
+void AudioEngine::startStep (int index, double straightLength, int channels) noexcept
 {
+    const auto continuing = step >= 0;
+
     // Wrap, and switch pattern on the wrap: the pattern being edited takes over at the bar line.
-    if (step < 0 || index >= session.pattern (patternIndex).getLength())
+    if (! continuing || index >= session.pattern (patternIndex).getLength())
     {
         index = 0;
-        patternIndex = session.selected.load (std::memory_order_relaxed);
-        session.playing.store (patternIndex, std::memory_order_relaxed);
+        patternIndex = session.selected.load (relaxed);
+        session.playing.store (patternIndex, relaxed);
     }
 
     const auto& pattern = session.pattern (patternIndex);
-    const auto current = pattern.getStep (index);
-    const auto gateOpen = step >= 0 && voice.isGateOn();
-    const auto slidingIn = gateOpen && lastStep.on && lastStep.slide;
-    const auto tiedIn = gateOpen && current.tie;
+    const auto nextIndex = index + 1 < pattern.getLength() ? index + 1 : 0;
+    const auto& nextPattern = nextIndex == 0 ? session.pattern (session.selected.load (relaxed)) : pattern;
 
     step = index;
-    lastStep = current;
-    session.transport.currentStep.store (index, std::memory_order_relaxed);
-    currentStepLength =
-        swungStepLength (straightLength, session.transport.swing.load (std::memory_order_relaxed), index);
-    gateReleased = false;
+    session.transport.currentStep.store (index, relaxed);
+    currentStepLength = swungStepLength (straightLength, session.transport.swing.load (relaxed), index);
+
+    for (int c = 0; c < channels; ++c)
+    {
+        auto& player = players[static_cast<size_t> (c)];
+        const auto current = pattern.lane (c).getStep (index);
+        const auto next = nextPattern.lane (c).getStep (nextIndex);
+        if (! continuing)
+            player.lastStep = {};
+        startChannelStep (player, continuing, current, next);
+    }
+}
+
+void AudioEngine::startChannelStep (ChannelPlayer& player, bool continuing, const Step& current,
+                                    const Step& next) noexcept
+{
+    if (player.kind == InstrumentKind::sampler)
+    {
+        if (current.on && ! current.tie)
+            player.sampler.trigger (current.note, current.accent);
+        player.lastStep = current;
+        return;
+    }
+
+    auto& voice = player.acid;
+    const auto gateOpen = continuing && voice.isGateOn();
+    const auto slidingIn = gateOpen && player.lastStep.on && player.lastStep.slide;
+    const auto tiedIn = gateOpen && current.tie;
+
+    player.lastStep = current;
+    player.gateReleased = false;
 
     if (current.on)
     {
@@ -129,14 +293,10 @@ void AudioEngine::startStep (int index, double straightLength) noexcept
     else
     {
         voice.gateOff();
-        gateReleased = true;
+        player.gateReleased = true;
     }
 
-    const auto nextIndex = index + 1 < pattern.getLength() ? index + 1 : 0;
-    const auto& nextPattern =
-        nextIndex == 0 ? session.pattern (session.selected.load (std::memory_order_relaxed)) : pattern;
-    const auto next = nextPattern.getStep (nextIndex);
-    holdGate = current.on && next.on && (current.slide || next.tie);
+    player.holdGate = current.on && next.on && (current.slide || next.tie);
 }
 
 void AudioEngine::audioDeviceIOCallbackWithContext (const float* const*, int, float* const* outputs, int numOutputs,

@@ -12,12 +12,13 @@
 
 namespace tekno::core
 {
-/** One step of a 303-style pattern. Accent, slide and tie are part of the step, not global settings:
-    they are what makes an acid line move. */
+/** One step of a lane. Accent, slide and tie are part of the step, not global settings: they are what
+    makes an acid line move. A sampler uses `on`, `accent` and `note` (its pitch) and ignores the rest. */
 struct Step
 {
-    static constexpr int minNote = 24; // C1
-    static constexpr int maxNote = 96; // C7
+    static constexpr int minNote = 24;         // C1
+    static constexpr int maxNote = 96;         // C7
+    static constexpr int samplerRootNote = 60; // C4: a sampler plays its sample at the original pitch here
 
     bool on = false;
     bool accent = false;

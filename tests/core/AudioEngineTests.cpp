@@ -15,6 +15,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include "TestSessions.h"
 #include "core/engine/AudioEngine.h"
 #include "core/engine/OfflineRender.h"
 
@@ -56,15 +57,16 @@ float peak (const std::vector<float>& x)
 void onlySteps (Session& s, std::initializer_list<int> on, bool accent = false)
 {
     for (int i = 0; i < Pattern::defaultLength; ++i)
-        s.pattern (0).setStep (i, Step { false, false, false, 45 });
+        s.pattern (0).lane (0).setStep (i, Step { false, false, false, 45 });
     for (auto i : on)
-        s.pattern (0).setStep (i, Step { true, accent, false, 45 });
+        s.pattern (0).lane (0).setStep (i, Step { true, accent, false, 45 });
 }
 } // namespace
 
 TEST_CASE ("stopped means silent", "[core][engine]")
 {
     Session session;
+    tekno::test::acidOnly (session);
     const auto out = render (session, 48000);
     CHECK (peak (out) == 0.0f);
 }
@@ -86,6 +88,7 @@ TEST_CASE ("steps start on the exact sample, whatever the buffer size", "[core][
     // 120 bpm at 48 kHz: a 16th note is exactly 6000 samples, so step 4 starts at sample 24000.
     const auto blockSize = GENERATE (1, 64, 512, 4096);
     Session session;
+    tekno::test::acidOnly (session);
     session.transport.bpm = 120.0;
     onlySteps (session, { 0, 4 });
     session.transport.playing = true;
@@ -108,6 +111,7 @@ TEST_CASE ("steps start on the exact sample, whatever the buffer size", "[core][
 TEST_CASE ("the audio thread publishes the playhead", "[core][engine]")
 {
     Session session;
+    tekno::test::acidOnly (session);
     session.transport.bpm = 120.0;
     session.transport.playing = true;
     render (session, 6000 * 3 + 10); // into step 3
@@ -117,6 +121,8 @@ TEST_CASE ("the audio thread publishes the playhead", "[core][engine]")
 TEST_CASE ("accented steps hit harder", "[core][engine]")
 {
     Session plain, accented;
+    tekno::test::acidOnly (plain);
+    tekno::test::acidOnly (accented);
     for (auto* s : { &plain, &accented })
     {
         s->transport.bpm = 120.0;
@@ -133,10 +139,11 @@ TEST_CASE ("a low cutoff sounds darker than a high one", "[core][engine]")
     auto brightness = [] (float cutoff)
     {
         Session s;
+        tekno::test::acidOnly (s);
         s.transport.bpm = 120.0;
-        s.synth.envMod = 0.0f;
-        s.synth.resonance = 0.0f;
-        s.synth.cutoff = cutoff;
+        s.channel (0).acid.envMod = 0.0f;
+        s.channel (0).acid.resonance = 0.0f;
+        s.channel (0).acid.cutoff = cutoff;
         onlySteps (s, { 0 });
         s.transport.playing = true;
         const auto out = render (s, 3000);
@@ -155,6 +162,7 @@ TEST_CASE ("a low cutoff sounds darker than a high one", "[core][engine]")
 TEST_CASE ("stopping lets the note die out quickly", "[core][engine]")
 {
     Session session;
+    tekno::test::acidOnly (session);
     session.transport.playing = true;
     AudioEngine engine (session);
     engine.prepare (sampleRate);
@@ -171,6 +179,7 @@ TEST_CASE ("stopping lets the note die out quickly", "[core][engine]")
 TEST_CASE ("offline render writes a WAV of the right length", "[core][engine]")
 {
     Session session;
+    tekno::test::acidOnly (session);
     session.transport.bpm = 120.0;
     const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("tekno-render-test.wav");
     REQUIRE (renderToWav (session, file, 2).wasOk());
@@ -188,6 +197,7 @@ TEST_CASE ("offline render writes a WAV of the right length", "[core][engine]")
 TEST_CASE ("an odd pattern length wraps on its own length", "[core][engine]")
 {
     Session session;
+    tekno::test::acidOnly (session);
     session.transport.bpm = 120.0; // 6000 samples per step
     onlySteps (session, { 0 });
     session.pattern (0).setLength (3);
@@ -200,6 +210,7 @@ TEST_CASE ("an odd pattern length wraps on its own length", "[core][engine]")
 TEST_CASE ("swing delays the off-beat 16ths by the exact amount", "[core][engine]")
 {
     Session session;
+    tekno::test::acidOnly (session);
     session.transport.bpm = 120.0;
     session.transport.swing = 66.0f; // first 16th of each pair: 66% of 12000 = 7920 samples
     onlySteps (session, { 0, 1 });
@@ -217,9 +228,10 @@ TEST_CASE ("a tie holds the note without a new attack", "[core][engine]")
     auto levelAcrossBoundary = [] (bool tie)
     {
         Session s;
+        tekno::test::acidOnly (s);
         s.transport.bpm = 120.0;
         onlySteps (s, { 0 });
-        s.pattern (0).setStep (1, Step { true, false, false, 45, tie });
+        s.pattern (0).lane (0).setStep (1, Step { true, false, false, 45, tie });
         s.transport.playing = true;
         const auto out = render (s, 12000);
         return rms (out, 5000, 6000); // the end of step 0: released without a tie, still sounding with it
@@ -231,6 +243,7 @@ TEST_CASE ("a tie holds the note without a new attack", "[core][engine]")
 TEST_CASE ("a newly selected pattern starts at the next bar, not mid-pattern", "[core][engine]")
 {
     Session session;
+    tekno::test::acidOnly (session);
     session.transport.bpm = 120.0;
     onlySteps (session, { 0, 1, 2, 3, 4, 5, 6, 7 });
     session.pattern (1).setLength (4);

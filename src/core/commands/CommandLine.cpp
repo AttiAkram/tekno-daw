@@ -126,25 +126,53 @@ namespace
     {
         juce::String s;
         for (const auto& p : def.params)
-            s << " <" << p.name << ">";
+            s << (p.optional ? " [" + p.name + "=]" : " <" + p.name + ">");
         return s;
+    }
+
+    /** Positional arguments fill the required parameters only; optional ones are given by name. */
+    std::vector<const CommandParam*> positionalParams (const CommandDefinition& def)
+    {
+        std::vector<const CommandParam*> list;
+        for (const auto& p : def.params)
+            if (! p.optional)
+                list.push_back (&p);
+        return list;
     }
 } // namespace
 
 const std::vector<std::pair<juce::String, juce::String>>& CommandLine::aliases()
 {
     static const std::vector<std::pair<juce::String, juce::String>> list {
-        { "play", "transport.play" },      { "stop", "transport.stop" },
-        { "bpm", "transport.bpm" },        { "swing", "transport.swing" },
-        { "select", "pattern.select" },    { "length", "pattern.length" },
-        { "rename", "pattern.rename" },    { "toggle", "pattern.step.toggle" },
-        { "note", "pattern.step.note" },   { "accent", "pattern.step.accent" },
-        { "slide", "pattern.step.slide" }, { "tie", "pattern.step.tie" },
-        { "undo", "edit.undo" },           { "redo", "edit.redo" },
-        { "save", "project.save" },        { "open", "project.open" },
-        { "cutoff", "synth.cutoff" },      { "reso", "synth.resonance" },
-        { "envmod", "synth.envmod" },      { "decay", "synth.decay" },
+        { "play", "transport.play" },
+        { "stop", "transport.stop" },
+        { "bpm", "transport.bpm" },
+        { "swing", "transport.swing" },
+        { "select", "pattern.select" },
+        { "length", "pattern.length" },
+        { "rename", "pattern.rename" },
+        { "toggle", "pattern.step.toggle" },
+        { "note", "pattern.step.note" },
+        { "accent", "pattern.step.accent" },
+        { "slide", "pattern.step.slide" },
+        { "tie", "pattern.step.tie" },
+        { "undo", "edit.undo" },
+        { "redo", "edit.redo" },
+        { "save", "project.save" },
+        { "open", "project.open" },
+        { "cutoff", "synth.cutoff" },
+        { "reso", "synth.resonance" },
+        { "envmod", "synth.envmod" },
+        { "decay", "synth.decay" },
         { "drive", "synth.drive" },
+        { "ch", "channel.select" },
+        { "tune", "sampler.tune" },
+        { "sdecay", "sampler.decay" },
+        { "sample", "sampler.load" },
+        { "vol", "mixer.volume" },
+        { "pan", "mixer.pan" },
+        { "mute", "mixer.mute" },
+        { "solo", "mixer.solo" },
     };
     return list;
 }
@@ -192,6 +220,7 @@ CommandLine::Result CommandLine::parse (const juce::String& line, const CommandR
     }
 
     CommandArgs args;
+    const auto positional = positionalParams (*def);
     size_t nextPositional = 0;
     for (int t = 1; t < tokens->size(); ++t)
     {
@@ -214,18 +243,19 @@ CommandLine::Result CommandLine::parse (const juce::String& line, const CommandR
         }
         else
         {
-            if (nextPositional >= def->params.size())
+            if (nextPositional >= positional.size())
             {
                 result.error =
                     "too many arguments for " + def->id + " (usage: " + def->id + describeParams (*def) + ")";
                 return result;
             }
-            param = &def->params[nextPositional++];
+            param = positional[nextPositional++];
             valueText = token;
 
-            // A trailing text argument swallows the rest of the line: `rename acid night`.
-            if (param->type == CommandParam::Type::text && nextPositional == def->params.size())
-                for (int rest = t + 1; rest < tokens->size(); ++rest, ++t)
+            // A trailing text argument swallows the rest of the line (`rename acid night`), up to the
+            // first `name=value` that follows (`rename acid night pattern=2`).
+            if (param->type == CommandParam::Type::text && nextPositional == positional.size())
+                for (int rest = t + 1; rest < tokens->size() && ! (*tokens)[rest].containsChar ('='); ++rest, ++t)
                     valueText << " " << (*tokens)[rest];
         }
 

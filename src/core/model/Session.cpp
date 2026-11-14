@@ -10,37 +10,68 @@
 
 namespace tekno::core
 {
-void AcidParams::reset() noexcept
-{
-    cutoff = defaultCutoff;
-    resonance = defaultResonance;
-    envMod = defaultEnvMod;
-    decay = defaultDecay;
-    accent = defaultAccent;
-    drive = defaultDrive;
-    square = false;
-}
+static_assert (std::tuple_size_v<decltype (ChannelData::lanes)> == Session::maxPatterns);
 
 Session::Session()
 {
     loadDefaultProject();
 }
 
-void Session::loadDefaultProject()
+void Session::clearProject()
 {
     transport.playing = false;
     transport.bpm = TransportState::defaultBpm;
     transport.swing = TransportState::minSwing;
-    synth.reset();
+    master.volumeDb = 0.0f;
+
+    numChannels = 0;
+    for (int c = 0; c < maxChannels; ++c)
+        clearChannelSlot (c);
 
     for (int i = 0; i < maxPatterns; ++i)
     {
         pattern (i).clear();
         project.patternNames[static_cast<size_t> (i)] = defaultPatternName (i);
     }
-    project.patternNames[0] = "acid 01";
     selected = 0;
     playing = 0;
+    selectedChannel = 0;
+
+    project.file = juce::File();
+    project.revision = project.savedRevision = 0;
+    project.warnings.clear();
+}
+
+void Session::loadDefaultProject()
+{
+    clearProject();
+
+    auto addSampler = [this] (const char* name, const char* sound, float volumeDb)
+    {
+        const auto index = addChannel (InstrumentKind::sampler, name);
+        setChannelSample (index, SampleLibrary::builtinPrefix + juce::String (sound));
+        channel (index).mixer.volumeDb = volumeDb;
+        return index;
+    };
+    const auto kick = addSampler ("kick", "kick", -6.0f);
+    const auto hat = addSampler ("hat", "hat", -16.0f);
+    addSampler ("open hat", "openhat", -18.0f);
+    const auto clap = addSampler ("clap", "clap", -13.0f);
+    const auto acid = addChannel (InstrumentKind::acid, "acid");
+    channel (acid).mixer.volumeDb = -8.0f;
+
+    project.patternNames[0] = "acid 01";
+    auto& first = pattern (0);
+
+    // Four on the floor, closed hat on the off-beats, clap on 2 and 4.
+    const Step hit { true, false, false, Step::samplerRootNote };
+    for (int beat = 0; beat < 4; ++beat)
+    {
+        first.lane (kick).setStep (beat * 4, hit);
+        first.lane (hat).setStep (beat * 4 + 2, hit);
+    }
+    first.lane (clap).setStep (4, hit);
+    first.lane (clap).setStep (12, hit);
 
     // A minor acid line: A2 root with octave jumps, accents on the off-beats, slides into the jumps.
     constexpr int A2 = 45, C3 = 48, D3 = 50, E3 = 52, G3 = 55, A3 = 57;
@@ -65,9 +96,124 @@ void Session::loadDefaultProject()
         on (A3),
     };
     for (int i = 0; i < Pattern::defaultLength; ++i)
-        patterns[0].setStep (i, line[i]);
+        first.lane (acid).setStep (i, line[i]);
 
-    project.file = juce::File();
+    selectedChannel = acid;
     project.revision = project.savedRevision = 0;
+}
+
+// --- channels -------------------------------------------------------------------------------------
+
+void Session::clearChannelSlot (int index)
+{
+    auto& c = channel (index);
+    c.kind = InstrumentKind::acid;
+    c.acid.store ({});
+    c.sampler.store ({});
+    c.mixer.store ({});
+    c.sample = nullptr;
+    c.peak = 0.0f;
+    ++c.generation;
+    for (auto& p : patterns)
+        p.lane (index).clear();
+    project.channelNames[channelSlot (index)] = {};
+    project.channelSamples[channelSlot (index)] = {};
+}
+
+juce::String Session::writeChannel (int index, const ChannelData& data)
+{
+    auto& c = channel (index);
+    c.kind = data.kind;
+    c.acid.store (data.acid);
+    c.sampler.store (data.sampler);
+    c.mixer.store (data.mixer);
+    c.peak = 0.0f;
+    for (size_t p = 0; p < data.lanes.size(); ++p)
+        for (int s = 0; s < Pattern::maxSteps; ++s)
+            patterns[p].lane (index).setStep (s, data.lanes[p][static_cast<size_t> (s)]);
+    project.channelNames[channelSlot (index)] = data.name;
+    const auto error = setChannelSample (index, data.sample);
+    ++c.generation;
+    return error;
+}
+
+ChannelData Session::captureChannel (int index) const
+{
+    const auto& c = channel (index);
+    ChannelData data;
+    data.kind = c.kind.load();
+    data.name = project.channelNames[channelSlot (index)];
+    data.sample = project.channelSamples[channelSlot (index)];
+    data.acid = c.acid.load();
+    data.sampler = c.sampler.load();
+    data.mixer = c.mixer.load();
+    for (size_t p = 0; p < data.lanes.size(); ++p)
+        for (int s = 0; s < Pattern::maxSteps; ++s)
+            data.lanes[p][static_cast<size_t> (s)] = patterns[p].lane (index).getStep (s);
+    return data;
+}
+
+int Session::addChannel (InstrumentKind kind, const juce::String& name)
+{
+    const auto index = channelCount();
+    if (index >= maxChannels)
+        return -1;
+    ChannelData data;
+    data.kind = kind;
+    data.name = name;
+    writeChannel (index, data);
+    numChannels = index + 1; // last: the audio thread only reads slots below the count
+    return index;
+}
+
+bool Session::insertChannel (int index, const ChannelData& data, juce::String* warning)
+{
+    const auto count = channelCount();
+    if (count >= maxChannels)
+        return false;
+    index = std::clamp (index, 0, count);
+    for (int c = count - 1; c >= index; --c)
+        writeChannel (c + 1, captureChannel (c));
+    const auto error = writeChannel (index, data);
+    if (warning != nullptr)
+        *warning = error;
+    numChannels = count + 1;
+    return true;
+}
+
+void Session::removeChannel (int index)
+{
+    const auto count = channelCount();
+    if (index < 0 || index >= count)
+        return;
+    numChannels = count - 1; // first: the audio thread stops reading the last slot
+    for (int c = index; c < count - 1; ++c)
+        writeChannel (c, captureChannel (c + 1));
+    clearChannelSlot (count - 1);
+    selectedChannel = std::clamp (selectedChannel.load(), 0, std::max (0, count - 2));
+}
+
+juce::String Session::setChannelSample (int index, const juce::String& origin)
+{
+    auto& c = channel (index);
+    project.channelSamples[channelSlot (index)] = origin;
+    if (origin.isEmpty())
+    {
+        c.sample = nullptr;
+        return {};
+    }
+    const auto result = samples.get (origin);
+    c.sample = result.sample;
+    return result.error;
+}
+
+void Session::collectSampleGarbage()
+{
+    samples.collectGarbage (audioBlocks.load(),
+                            [this] (const Sample* s)
+                            {
+                                return std::any_of (channels.begin(), channels.end(),
+                                                    [s] (const Channel& c) { return c.sample.load() == s; });
+                            });
 }
 } // namespace tekno::core

@@ -21,6 +21,13 @@ struct Fixture
     CommandRegistry registry;
     Fixture() { registerSessionCommands (registry, session); }
 
+    /** A step of the acid channel (the selected one in the default project). */
+    Step acidStep (int pattern, int index) const
+    {
+        return session.pattern (pattern).lane (session.selectedChannel).getStep (index);
+    }
+    AcidParams& acid() { return session.selectedChannelRef().acid; }
+
     juce::String run (const juce::String& line)
     {
         const auto parsed = CommandLine::parse (line, registry);
@@ -43,20 +50,20 @@ TEST_CASE ("positional, named and aliased arguments", "[core][terminal]")
     CHECK (f.run ("play").isEmpty());
     CHECK (f.session.transport.playing.load());
     CHECK (f.run ("drive 0.6").isEmpty());
-    CHECK (f.session.synth.drive.load() == 0.6f);
+    CHECK (f.acid().drive.load() == 0.6f);
     CHECK (f.run ("reso 0.9").isEmpty());
-    CHECK (f.session.synth.resonance.load() == 0.9f);
+    CHECK (f.acid().resonance.load() == 0.9f);
 }
 
 TEST_CASE ("notes by name, booleans in words, the rest of the line as text", "[core][terminal]")
 {
     Fixture f;
     CHECK (f.run ("pattern.step.note 3 C#3").isEmpty());
-    CHECK (f.session.pattern (0).getStep (2).note == 49);
+    CHECK (f.acidStep (0, 2).note == 49);
     CHECK (f.run ("accent 2 on").isEmpty());
-    CHECK (f.session.pattern (0).getStep (1).accent);
+    CHECK (f.acidStep (0, 1).accent);
     CHECK (f.run ("slide step=4 on=off").isEmpty());
-    CHECK_FALSE (f.session.pattern (0).getStep (3).slide);
+    CHECK_FALSE (f.acidStep (0, 3).slide);
     CHECK (f.run ("rename acid night  01").isEmpty());
     CHECK (f.session.project.patternNames[0] == "acid night 01");
     CHECK (f.run ("rename \"with \\\"quotes\\\"\"").isEmpty());

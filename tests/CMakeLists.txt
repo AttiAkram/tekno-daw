@@ -4,6 +4,7 @@ include(Catch)
 
 add_executable(tekno_tests
     core/AudioEngineTests.cpp
+    core/ChannelTests.cpp
     core/CommandLineTests.cpp
     core/CommandTests.cpp
     core/DriveTests.cpp
@@ -25,7 +26,7 @@ catch_discover_tests(tekno_tests
     TEST_PREFIX "unit."
     DISCOVERY_MODE PRE_TEST)
 
-# The engine must never depend on the GUI (ADR 0011). The compiler can't see it, this can.
+# The engine must never depend on the GUI. The compiler can't see it, this can.
 add_test(NAME layering
     COMMAND "${CMAKE_COMMAND}" -DSOURCE_DIR=${PROJECT_SOURCE_DIR} -P "${PROJECT_SOURCE_DIR}/cmake/CheckLayering.cmake")
 

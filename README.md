@@ -3,9 +3,10 @@
 An open source, pattern-based DAW for **acid / mental tekno** — built in the spirit of
 FL Studio's workflow, with a 303-style acid synth wired in from day one.
 
-> **Status: pre-alpha.** The built-in acid synth plays on your sound card, with an antialiased drive:
-> 16 patterns of 1 to 64 steps with accent, slide and tie, swing, pattern changes on the bar, undo of
-> every edit, a built-in command terminal, and projects saved as readable `.tekno` files.
+> **Status: pre-alpha.** A channel rack of up to 16 channels — 303-style acid synths with an
+> antialiased drive, and a drum sampler with a built-in kit — through a mixer with volume, pan, mute
+> and solo. 16 patterns of 1 to 64 steps with accent, slide and tie, swing, pattern changes on the bar,
+> undo of every edit, a built-in command terminal, and projects saved as readable `.tekno` files.
 
 ## Goals
 
@@ -27,7 +28,7 @@ and project version history.
 | ✅ M0 | Foundations: build, tests, CI, visual theme, style preview |
 | ✅ M1 | MVP: an acid synth playing a 16-step pattern |
 | ✅ M2 | Real sequencer: patterns, accent / slide / tie, swing, project files, drive, terminal |
-| ▶ M3 | Channel rack, mixer, piano roll, drum sampler |
+| ▶ M3 | Channel rack, drum sampler, mixer (✅ engine and rack), piano roll, keymaps, tiling panels |
 | M4 | VST3 hosting (out of process) and MIDI input |
 | M5 | Audio export, full project format, more import formats |
 | M6 | Arrangement and automation |
@@ -44,10 +45,26 @@ cmake --build --preset dev --target run
 The first configure downloads JUCE and Catch2 once (pinned version + SHA-256) into `.cache/deps/`;
 after that everything works offline. A full build takes about a minute on a 12-core machine.
 
+### Start it with one click
+
+```sh
+scripts/install-desktop-entry.sh     # adds "tekno-daw" to the application menu
+```
+
+Then open tekno-daw from the application menu like any other app (on GNOME: right click → *Pin to
+Dash*). Each click runs `scripts/tekno-daw.sh`, which rebuilds only what changed since the last start
+and opens the app; progress and build errors show up as desktop notifications, and the full output
+goes to `~/.cache/tekno-daw/launch.log`. From a terminal the same script works directly:
+`scripts/tekno-daw.sh --theme=light`. Use `TEKNO_PRESET=release` for the optimised build, and
+`scripts/install-desktop-entry.sh --uninstall` to remove the launcher.
+
 | Key / mouse | Action |
 |---|---|
 | Space | play / stop |
-| Click a step | on / off |
+| Click a step | on / off (on that row's channel) |
+| Click a channel's name, or Up / Down | select the channel: the knobs on the left follow it |
+| M / S next to a channel | mute / solo |
+| [ / ], or click "bar 1 of 4" | show the next 16 steps of a longer pattern |
 | Shift / Ctrl / Alt + click | accent / slide / tie |
 | Wheel on a step | pitch (Shift: octave) |
 | Drag or wheel on the BPM pill | tempo (Shift: fine, double-click: 130) |
@@ -55,7 +72,7 @@ after that everything works offline. A full build takes about a minute on a 12-c
 | Drag the swing pill | swing, 50% straight to 75% |
 | PgUp / PgDn, or click 1-16 | select a pattern (while playing it starts on the next bar) |
 | Double-click the title | rename the pattern |
-| Ctrl+Z / Ctrl+Y | undo / redo pattern edits |
+| Ctrl+Z / Ctrl+Y | undo / redo |
 | Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+N | save / save as / open / new |
 | T | light / dark theme |
 | ` (backquote) | open / close the terminal |
@@ -109,8 +126,18 @@ note 3 C#3              set step 3 to C#3
 accent 5 on             accent on step 5
 rename acid night       rename the pattern
 drive 0.6               push the 303 into distortion
+ch 1                    select channel 1
+toggle 5 channel=2      edit another channel without selecting it
+channel.add sampler name=snare
+sample builtin:clap     load a built-in sound, or a WAV / AIFF / FLAC / Ogg file
+tune -2                 tune the selected sampler down two semitones
+vol -6 channel=1        mixer: volume in dB, also pan, mute, solo, mixer.master
 help bpm                what a command takes; help alone lists them all
 ```
+
+Commands act on the selected pattern and channel; `pattern=` and `channel=` pick another one. The
+built-in kit (`kick`, `hat`, `openhat`, `clap`) is synthesised by code, so a new project plays a loop
+straight away without shipping anyone's samples.
 
 Tab completes, Up/Down walk the history, and `tekno-daw --run="bpm 138; drive 0.5"` runs commands at
 start.
@@ -123,6 +150,11 @@ name, so they are easy to read, edit by hand and compare between versions:
 ```json
 { "on": true, "note": "A2", "accent": true, "slide": false, "tie": false },
 ```
+
+Sample files inside the project's folder are stored relative to it, so the folder can be moved whole.
+A missing sample doesn't stop a project from opening: that channel stays silent and keeps its
+reference, and you are told which files are missing. Projects from older versions open and are
+upgraded when saved.
 
 ## Stack
 
@@ -144,8 +176,9 @@ src/
   app/                the executable: main, window, command-line options
 tests/                unit tests, layering check, window smoke tests
 assets/fonts/         Inter and Barlow Condensed (SIL OFL 1.1), embedded in the binary
+assets/icons/         application icon
 cmake/                dependencies (pinned + hashed), compiler options, JUCE setup
-scripts/              system dependency installers (one list per distro)
+scripts/              dependency installers (one list per distro), launcher and menu entry
 docker/               clean-room build image
 ```
 

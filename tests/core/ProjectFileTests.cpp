@@ -7,9 +7,11 @@
 // of the License, or (at your option) any later version. See the LICENSE file for details.
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
+#include <juce_audio_formats/juce_audio_formats.h>
 
 #include "core/commands/SessionCommands.h"
 #include "core/engine/AudioEngine.h"
@@ -26,40 +28,85 @@ void makeInteresting (Session& s)
 {
     s.transport.bpm = 138.5;
     s.transport.swing = 62.0f;
-    s.synth.cutoff = 0.12f;
-    s.synth.resonance = 0.95f;
-    s.synth.envMod = 0.33f;
-    s.synth.decay = 0.7f;
-    s.synth.accent = 1.0f;
-    s.synth.square = true;
-    s.pattern (0).setStep (5, Step { true, false, false, 61, true }); // a tie
+    s.master.volumeDb = -2.5f;
+    const auto acid = s.selectedChannel.load();
+    auto& synth = s.channel (acid).acid;
+    synth.cutoff = 0.12f;
+    synth.resonance = 0.95f;
+    synth.envMod = 0.33f;
+    synth.decay = 0.7f;
+    synth.accent = 1.0f;
+    synth.drive = 0.4f;
+    synth.square = true;
+    s.channel (acid).mixer.pan = -0.25f;
+    s.channel (0).sampler.tune = -3.0f;
+    s.channel (0).sampler.decay = 0.4f;
+    s.channel (1).mixer.mute = true;
+    s.channel (3).mixer.solo = true;
+    s.project.channelNames[2] = "ride \"open\"";
+    s.pattern (0).lane (acid).setStep (5, Step { true, false, false, 61, true }); // a tie
+    s.pattern (0).lane (0).setStep (3, Step { true, true, false, 67 });           // a kick a fifth up
     s.pattern (2).setLength (13);
-    s.pattern (2).setStep (12, Step { true, true, true, 96 });
-    s.pattern (2).setStep (40, Step { true, false, false, 24 }); // past the length: must survive
+    s.pattern (2).lane (acid).setStep (12, Step { true, true, true, 96 });
+    s.pattern (2).lane (acid).setStep (40, Step { true, false, false, 24 }); // past the length: must survive
     s.project.patternNames[2] = "rumble \"quoted\" / ünïcode";
     s.selected = 2;
+}
+
+void requireSameChannel (const ChannelData& a, const ChannelData& b)
+{
+    REQUIRE (a.kind == b.kind);
+    REQUIRE (a.name == b.name);
+    REQUIRE (a.sample == b.sample);
+    REQUIRE (a.acid == b.acid);
+    REQUIRE (a.sampler == b.sampler);
+    REQUIRE (a.mixer == b.mixer);
+    for (size_t p = 0; p < a.lanes.size(); ++p)
+        REQUIRE (a.lanes[p] == b.lanes[p]);
 }
 
 void requireSame (const Session& a, const Session& b)
 {
     REQUIRE (a.transport.bpm.load() == b.transport.bpm.load());
     REQUIRE (a.transport.swing.load() == b.transport.swing.load());
-    REQUIRE (a.synth.cutoff.load() == b.synth.cutoff.load());
-    REQUIRE (a.synth.resonance.load() == b.synth.resonance.load());
-    REQUIRE (a.synth.envMod.load() == b.synth.envMod.load());
-    REQUIRE (a.synth.decay.load() == b.synth.decay.load());
-    REQUIRE (a.synth.accent.load() == b.synth.accent.load());
-    REQUIRE (a.synth.square.load() == b.synth.square.load());
+    REQUIRE (a.master.volumeDb.load() == b.master.volumeDb.load());
     REQUIRE (a.selected.load() == b.selected.load());
+    REQUIRE (a.selectedChannel.load() == b.selectedChannel.load());
+    REQUIRE (a.channelCount() == b.channelCount());
+    for (int c = 0; c < a.channelCount(); ++c)
+    {
+        CAPTURE (c);
+        requireSameChannel (a.captureChannel (c), b.captureChannel (c));
+    }
     for (int p = 0; p < Session::maxPatterns; ++p)
     {
         CAPTURE (p);
         REQUIRE (a.project.patternNames[static_cast<size_t> (p)] == b.project.patternNames[static_cast<size_t> (p)]);
         REQUIRE (a.pattern (p).getLength() == b.pattern (p).getLength());
-        for (int s = 0; s < Pattern::maxSteps; ++s)
-            REQUIRE (a.pattern (p).getStep (s) == b.pattern (p).getStep (s));
     }
 }
+
+/** An M2 project, as M2 wrote it: one synth, one line per pattern. */
+const char* version1File = R"({
+  "format": "tekno-daw/project",
+  "version": 1,
+  "tempo": { "bpm": 140, "swing": 58 },
+  "synth": { "cutoff": 0.2, "resonance": 0.9, "envMod": 0.5, "decay": 0.3, "accent": 0.8, "drive": 0.25, "waveform": "square" },
+  "selectedPattern": 2,
+  "patterns": [
+    {
+      "number": 2,
+      "name": "old line",
+      "length": 3,
+      "steps": [
+        { "on": true, "note": "A2", "accent": true, "slide": false, "tie": false },
+        { "on": false, "note": "A2", "accent": false, "slide": false, "tie": false },
+        { "on": true, "note": "C3", "accent": false, "slide": true, "tie": false }
+      ]
+    }
+  ]
+}
+)";
 } // namespace
 
 TEST_CASE ("note names round-trip and accept flats", "[core][notes]")
@@ -97,6 +144,8 @@ TEST_CASE ("the file is readable and diffable", "[core][project]")
     Session s;
     const auto text = project::toText (s);
     CHECK (text.contains ("\"format\": \"tekno-daw/project\""));
+    CHECK (text.contains ("\"version\": 2"));
+    CHECK (text.contains ("\"sampler\": { \"sample\": \"builtin:kick\""));
     CHECK (text.contains ("\"name\": \"acid 01\""));
     CHECK (text.contains ("{ \"on\": true, \"note\": \"A2\", \"accent\": true, \"slide\": false, \"tie\": false }"));
     // one step per line, and only patterns that hold something
@@ -113,13 +162,13 @@ TEST_CASE ("a broken file says where and leaves the session alone", "[core][proj
     auto broken = project::toText (Session {}).replace ("\"note\": \"A3\"", "\"note\": \"H3\"");
     auto result = project::fromText (broken, s);
     REQUIRE (result.failed());
-    CHECK (result.getErrorMessage().contains ("patterns[0].steps[2].note"));
+    CHECK (result.getErrorMessage().contains ("patterns[0].lanes[3].steps[2].note"));
     CHECK (result.getErrorMessage().contains ("H3"));
     CHECK (project::toText (s) == before);
 
     CHECK (project::fromText ("not json at all", s).failed());
     CHECK (project::fromText ("{ \"hello\": 1 }", s).getErrorMessage().contains ("not a tekno-daw project"));
-    CHECK (project::fromText (project::toText (s).replace ("\"version\": 1", "\"version\": 9"), s)
+    CHECK (project::fromText (project::toText (s).replace ("\"version\": 2", "\"version\": 9"), s)
                .getErrorMessage()
                .contains ("newer tekno-daw"));
     CHECK (project::fromText (project::toText (s).replace ("\"bpm\": 138.5", "\"bpm\": 9000"), s)
@@ -134,6 +183,77 @@ TEST_CASE ("missing optional fields fall back to defaults", "[core][project]")
     REQUIRE (project::fromText ("{ \"format\": \"tekno-daw/project\", \"version\": 1 }", s).wasOk());
     CHECK (s.transport.bpm.load() == TransportState::defaultBpm);
     CHECK (s.pattern (0).isEmpty());
+    CHECK (s.channelCount() == 1);
+}
+
+TEST_CASE ("a version 1 project from M2 still opens, as one acid channel", "[core][project]")
+{
+    Session s;
+    REQUIRE (project::fromText (version1File, s).wasOk());
+    REQUIRE (s.channelCount() == 1);
+    CHECK (s.channel (0).kind.load() == InstrumentKind::acid);
+    CHECK (s.channel (0).acid.square.load());
+    CHECK (s.channel (0).acid.drive.load() == 0.25f);
+    CHECK (s.transport.bpm.load() == 140.0);
+    CHECK (s.selected.load() == 1);
+    CHECK (s.project.patternNames[1] == "old line");
+    CHECK (s.pattern (1).getLength() == 3);
+    CHECK (s.pattern (1).lane (0).getStep (0) == Step { true, true, false, 45 });
+    CHECK (s.pattern (1).lane (0).getStep (2).slide);
+
+    // Saved again, it is a version 2 file that reads back the same.
+    const auto text = project::toText (s);
+    CHECK (text.contains ("\"version\": 2"));
+    Session again;
+    REQUIRE (project::fromText (text, again).wasOk());
+    requireSame (s, again);
+}
+
+TEST_CASE ("a missing sample is a warning, and the reference survives", "[core][project][sampler]")
+{
+    const auto folder = juce::File::createTempFile ("tekno-project");
+    REQUIRE (folder.createDirectory());
+    const auto samplesFolder = folder.getChildFile ("samples");
+    REQUIRE (samplesFolder.createDirectory());
+    const auto wav = samplesFolder.getChildFile ("snare.wav");
+
+    // A real file next to the project: written relative, so the folder can move.
+    {
+        juce::AudioBuffer<float> audio (1, 4800);
+        for (int i = 0; i < audio.getNumSamples(); ++i)
+            audio.setSample (0, i, std::sin (static_cast<float> (i) * 0.05f) * 0.5f);
+        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (wav);
+        juce::WavAudioFormat format;
+        auto writer = format.createWriterFor (
+            stream,
+            juce::AudioFormatWriterOptions {}.withSampleRate (48000).withNumChannels (1).withBitsPerSample (16));
+        REQUIRE (writer != nullptr);
+        REQUIRE (writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples()));
+    }
+
+    Session s;
+    REQUIRE (s.setChannelSample (0, wav.getFullPathName()).isEmpty());
+    REQUIRE (s.channel (0).sample.load() != nullptr);
+    const auto projectFile = folder.getChildFile ("song.tekno");
+    REQUIRE (project::save (s, projectFile).wasOk());
+    CHECK (projectFile.loadFileAsString().contains ("\"sample\": \"samples/snare.wav\""));
+
+    Session reopened;
+    REQUIRE (project::load (projectFile, reopened).wasOk());
+    CHECK (reopened.channel (0).sample.load() != nullptr);
+    CHECK (reopened.project.warnings.isEmpty());
+
+    // The drive is unplugged: the project opens, the channel is silent, saving keeps the reference.
+    REQUIRE (wav.deleteFile());
+    Session unplugged;
+    REQUIRE (project::load (projectFile, unplugged).wasOk());
+    CHECK (unplugged.channel (0).sample.load() == nullptr);
+    REQUIRE (unplugged.project.warnings.size() == 1);
+    CHECK (unplugged.project.warnings[0].contains ("channel 1 (kick)"));
+    CHECK (unplugged.project.warnings[0].contains ("not found"));
+    CHECK (project::toText (unplugged, folder).contains ("\"sample\": \"samples/snare.wav\""));
+
+    folder.deleteRecursively();
 }
 
 TEST_CASE ("project commands save, mark changes and open", "[core][project][commands]")
@@ -156,7 +276,7 @@ TEST_CASE ("project commands save, mark changes and open", "[core][project][comm
     CHECK (s.project.hasUnsavedChanges());
 
     REQUIRE (r.execute ("project.open", { { "path", file.getFullPathName() } }).succeeded());
-    CHECK (s.pattern (0).getStep (1).on); // the saved state, not the undone one
+    CHECK (s.pattern (0).lane (s.selectedChannel).getStep (1).on); // the saved state, not the undone one
     CHECK_FALSE (s.project.hasUnsavedChanges());
     CHECK_FALSE (r.canUndo()); // history belongs to the previous document
     CHECK_FALSE (s.transport.playing.load());
@@ -185,7 +305,8 @@ TEST_CASE ("a saved and reopened project sounds identical, sample for sample", "
 
     Session original;
     makeInteresting (original);
-    original.selected = 0; // the acid line, with the tie added by makeInteresting
+    original.selected = 0;                   // the loop, with the tie and the tuned kick added by makeInteresting
+    original.channel (3).mixer.solo = false; // every channel playing
     const auto file = juce::File::createTempFile (project::extension);
     REQUIRE (project::save (original, file).wasOk());
 

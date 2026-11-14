@@ -34,6 +34,7 @@ struct CommandParam
     double min = 0.0;
     double max = 1.0;
     juce::String description;
+    bool optional = false; // may be left out; the terminal takes it only by name (`channel=2`)
 };
 
 /** What running a command produced. A command that sets `undo` becomes undoable. */
@@ -42,10 +43,18 @@ struct CommandOutcome
     juce::String error; // empty = success
     std::function<void()> undo;
 
+    /** The arguments with every implicit target made explicit (the selected pattern and channel at
+        the time it ran). History keeps these, so redo acts on the same target even if the selection
+        has changed since. Empty = the arguments as given. */
+    CommandArgs resolvedArgs;
+
+    /** Something worth telling the person who ran it, on success (e.g. "2 samples are missing"). */
+    juce::String note;
+
     bool succeeded() const noexcept { return error.isEmpty(); }
 
-    static CommandOutcome ok (std::function<void()> undoAction = {}) { return { {}, std::move (undoAction) }; }
-    static CommandOutcome fail (juce::String why) { return { std::move (why), {} }; }
+    static CommandOutcome ok (std::function<void()> undoAction = {}) { return { {}, std::move (undoAction), {}, {} }; }
+    static CommandOutcome fail (juce::String why) { return { std::move (why), {}, {}, {} }; }
 };
 
 struct CommandDefinition
@@ -58,7 +67,7 @@ struct CommandDefinition
     bool coalesce = false;        // repeated runs inside one gesture (a knob drag) undo as one step
 };
 
-/** The single entry point for every action that changes the DAW (ADR 0014). Mouse, keyboard,
+/** The single entry point for every action that changes the DAW. Mouse, keyboard,
     and later the terminal, remote clients and scripts all go through execute().
 
     Message thread only. The audio thread never runs commands: it sees their effects through the

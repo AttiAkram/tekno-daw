@@ -29,29 +29,41 @@ Step Step::unpack (std::uint32_t bits) noexcept
     return s;
 }
 
-Pattern::Pattern() noexcept
-{
-    clear();
-}
+// --- Lane -----------------------------------------------------------------------------------------
 
-void Pattern::clear() noexcept
-{
-    for (auto& step : steps)
-        step.store (Step {}.pack(), std::memory_order_relaxed);
-    length.store (defaultLength, std::memory_order_relaxed);
-}
-
-Step Pattern::getStep (int index) const noexcept
+Step Lane::getStep (int index) const noexcept
 {
     if (! isValidIndex (index))
         return {};
     return Step::unpack (steps[static_cast<size_t> (index)].load (std::memory_order_relaxed));
 }
 
-void Pattern::setStep (int index, const Step& step) noexcept
+void Lane::setStep (int index, const Step& step) noexcept
 {
     if (isValidIndex (index))
         steps[static_cast<size_t> (index)].store (step.pack(), std::memory_order_relaxed);
+}
+
+bool Lane::isBlank() const noexcept
+{
+    const auto blank = Step {}.pack();
+    return std::all_of (steps.begin(), steps.end(),
+                        [blank] (const auto& s) { return s.load (std::memory_order_relaxed) == blank; });
+}
+
+void Lane::clear() noexcept
+{
+    for (auto& step : steps)
+        step.store (Step {}.pack(), std::memory_order_relaxed);
+}
+
+// --- Pattern --------------------------------------------------------------------------------------
+
+void Pattern::clear() noexcept
+{
+    for (auto& l : lanes)
+        l.clear();
+    length.store (defaultLength, std::memory_order_relaxed);
 }
 
 void Pattern::setLength (int newLength) noexcept
@@ -63,9 +75,10 @@ bool Pattern::isEmpty() const noexcept
 {
     if (getLength() != defaultLength)
         return false;
-    for (int i = 0; i < maxSteps; ++i)
-        if (getStep (i).on)
-            return false;
+    for (const auto& l : lanes)
+        for (int i = 0; i < maxSteps; ++i)
+            if (l.getStep (i).on)
+                return false;
     return true;
 }
 } // namespace tekno::core
