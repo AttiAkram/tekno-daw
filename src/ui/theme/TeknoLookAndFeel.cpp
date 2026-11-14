@@ -153,6 +153,39 @@ void TeknoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
     g.strokePath (arc, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
+void TeknoLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
+                                         float minSliderPos, float maxSliderPos, juce::Slider::SliderStyle style,
+                                         juce::Slider& slider)
+{
+    if (style != juce::Slider::LinearVertical)
+    {
+        LookAndFeel_V4::drawLinearSlider (g, x, y, width, height, sliderPos, minSliderPos, maxSliderPos, style, slider);
+        return;
+    }
+
+    // A fader: a thin track, ink from the bottom up to the cap, the cap a flat ink bar.
+    using P = tokens::Palette;
+    const auto area = juce::Rectangle<float> (static_cast<float> (x), static_cast<float> (y),
+                                              static_cast<float> (width), static_cast<float> (height));
+    const auto centreX = area.getCentreX();
+    const auto active = slider.isMouseOverOrDragging();
+
+    g.setColour (active ? colour (&P::ink) : colour (&P::line));
+    g.fillRect (centreX - tokens::shape::lineWidth * 0.5f, area.getY(), tokens::shape::lineWidth, area.getHeight());
+    g.setColour (colour (&P::ink));
+    g.fillRect (centreX - 1.0f, sliderPos, 2.0f, area.getBottom() - sliderPos);
+
+    const auto cap = juce::Rectangle<float> (tokens::shape::faderWidth, 10.0f).withCentre ({ centreX, sliderPos });
+    g.fillRoundedRectangle (cap, 2.0f);
+    g.setColour (colour (&P::bg));
+    g.fillRect (cap.withSizeKeepingCentre (cap.getWidth() - 10.0f, tokens::shape::lineWidth));
+}
+
+int TeknoLookAndFeel::getSliderThumbRadius (juce::Slider& slider)
+{
+    return slider.getSliderStyle() == juce::Slider::LinearVertical ? 6 : LookAndFeel_V4::getSliderThumbRadius (slider);
+}
+
 juce::Font TeknoLookAndFeel::getTextButtonFont (juce::TextButton&, int)
 {
     return typefaces.font (tokens::type::control);

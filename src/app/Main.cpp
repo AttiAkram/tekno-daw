@@ -98,7 +98,12 @@ public:
         auto view = std::make_unique<ui::PatternView> (*lookAndFeel, session, commands, *projectActions,
                                                        [this] { return audioStatus(); });
         auto* viewPtr = view.get();
+        mainView = viewPtr;
         mainWindow = std::make_unique<MainWindow> (getApplicationName(), *lookAndFeel, std::move (view));
+
+        if (options.view.isNotEmpty())
+            if (const auto outcome = commands.execute ("ui.view", { { "view", options.view } }); ! outcome.succeeded())
+                std::cerr << "tekno-daw: " << outcome.error << "\n";
 
         auto startupCommands = options.run;
         startupCommands.trim();
@@ -122,6 +127,7 @@ public:
             deviceManager->closeAudioDevice();
             deviceManager.reset();
         }
+        mainView = nullptr;
         mainWindow.reset();
         projectActions.reset();
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
@@ -191,6 +197,19 @@ private:
                                 mainWindow->sendLookAndFeelChange();
                             return core::CommandOutcome::ok();
                         } });
+        commands.add ({ "ui.view",
+                        "Show a view: pattern (F6) or mixer (F9)",
+                        { { "view", core::CommandParam::Type::text, 0, 0, "pattern or mixer" } },
+                        [this] (const core::CommandArgs& args)
+                        {
+                            const auto name = args["view"].toString().trim().toLowerCase();
+                            const auto view = ui::PatternView::viewFromName (name);
+                            if (! view)
+                                return core::CommandOutcome::fail ("unknown view '" + name + "': use pattern or mixer");
+                            if (mainView != nullptr)
+                                mainView->showView (*view);
+                            return core::CommandOutcome::ok();
+                        } });
     }
 
     void exitEarly (int code)
@@ -230,6 +249,7 @@ private:
     std::unique_ptr<ui::ProjectActions> projectActions;
     std::unique_ptr<ui::TeknoLookAndFeel> lookAndFeel;
     std::unique_ptr<MainWindow> mainWindow;
+    ui::PatternView* mainView = nullptr; // owned by mainWindow; the target of ui.view
 };
 } // namespace tekno::app
 

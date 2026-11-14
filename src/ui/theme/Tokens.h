@@ -131,6 +131,8 @@ namespace shape
     inline constexpr float navDotSize        = 4.0f;
     inline constexpr float dashLength        = 4.0f;
     inline constexpr float dashGap           = 4.0f;
+    inline constexpr float meterWidth        = 6.0f;
+    inline constexpr float faderWidth        = 28.0f;
 } // namespace shape
 
 // --- space --------------------------------------------------------------------------------------
@@ -152,6 +154,10 @@ namespace motion
 {
     inline constexpr int fastMs   = 120;
     inline constexpr int normalMs = 150;
+
+    // Level meters: rise at once, fall at this rate; the peak line holds before it falls.
+    inline constexpr float meterFallDbPerSecond = 24.0f;
+    inline constexpr int   meterHoldMs          = 1500;
 } // namespace motion
 } // namespace tekno::ui::tokens
 // clang-format on

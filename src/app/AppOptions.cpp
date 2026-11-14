@@ -36,6 +36,8 @@ AppOptions AppOptions::parse (const juce::StringArray& arguments)
         }
         else if (arg.startsWith ("--run="))
             options.run.addTokens (arg.fromFirstOccurrenceOf ("=", false, false), ";", "\"");
+        else if (arg.startsWith ("--view="))
+            options.view = arg.fromFirstOccurrenceOf ("=", false, false);
         else if (arg == "--no-audio")
             options.noAudio = true;
         else if (arg == "--theme=dark")
@@ -58,6 +60,7 @@ juce::String AppOptions::helpText()
            "  --snapshot=<file>    render the main window to a PNG and exit\n"
            "  --render=<file.wav>  render the pattern to a WAV (no window, no audio device) and exit\n"
            "  --bars=<n>           how many bars --render writes (default 4)\n"
+           "  --view=pattern|mixer start on this view\n"
            "  --no-audio           start without opening an audio device\n"
            "  --run=\"cmd; cmd\"     open the terminal and run these commands at start\n"
            "  --smoke-test         open the window, quit after one second (used by tests)\n"

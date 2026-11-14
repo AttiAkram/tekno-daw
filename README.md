@@ -28,7 +28,7 @@ and project version history.
 | ✅ M0 | Foundations: build, tests, CI, visual theme, style preview |
 | ✅ M1 | MVP: an acid synth playing a 16-step pattern |
 | ✅ M2 | Real sequencer: patterns, accent / slide / tie, swing, project files, drive, terminal |
-| ▶ M3 | Channel rack, drum sampler, mixer (✅ engine and rack), piano roll, keymaps, tiling panels |
+| ▶ M3 | Channel rack, drum sampler, mixer (✅ engine, rack, mixer view), piano roll, keymaps, tiling panels |
 | M4 | VST3 hosting (out of process) and MIDI input |
 | M5 | Audio export, full project format, more import formats |
 | M6 | Arrangement and automation |
@@ -64,6 +64,9 @@ goes to `~/.cache/tekno-daw/launch.log`. From a terminal the same script works d
 | Click a step | on / off (on that row's channel) |
 | Click a channel's name, or Up / Down | select the channel: the knobs on the left follow it |
 | M / S next to a channel | mute / solo |
+| Double-click a channel's name | rename it |
+| Wheel beside the steps | scroll the rack when the channels don't fit |
+| F6 / F9 (or the top bar) | pattern view / mixer view |
 | [ / ], or click "bar 1 of 4" | show the next 16 steps of a longer pattern |
 | Shift / Ctrl / Alt + click | accent / slide / tie |
 | Wheel on a step | pitch (Shift: octave) |
@@ -110,6 +113,7 @@ tekno-daw --theme=dark|light   start with this theme
 tekno-daw --snapshot=out.png   render the main window to a PNG and exit
 tekno-daw song.tekno           open a project
 tekno-daw song.tekno --render=out.wav --bars=8   render its selected pattern to a WAV, no sound card needed
+tekno-daw --view=mixer         start on the mixer
 tekno-daw --no-audio           start without opening an audio device
 tekno-daw --run="bpm 138; swing 62"   open the terminal and run commands at start
 tekno-daw --smoke-test         open the window and quit after a second
@@ -134,6 +138,9 @@ tune -2                 tune the selected sampler down two semitones
 vol -6 channel=1        mixer: volume in dB, also pan, mute, solo, mixer.master
 help bpm                what a command takes; help alone lists them all
 ```
+
+The mixer view (F9) has a strip per channel — fader, pan, mute, solo, a level meter with a peak line and
+a clip light (click it to reset) — and the master. A whole fader drag is one undo step.
 
 Commands act on the selected pattern and channel; `pattern=` and `channel=` pick another one. The
 built-in kit (`kick`, `hat`, `openhat`, `clap`) is synthesised by code, so a new project plays a loop

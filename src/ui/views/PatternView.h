@@ -10,15 +10,18 @@
 
 #include <array>
 #include <functional>
+#include <optional>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "core/commands/CommandRegistry.h"
 #include "core/model/Session.h"
 #include "ui/ProjectActions.h"
+#include "ui/components/LevelMeters.h"
 #include "ui/components/Terminal.h"
 #include "ui/components/ValueChip.h"
 #include "ui/theme/TeknoLookAndFeel.h"
+#include "ui/views/MixerView.h"
 
 namespace tekno::ui
 {
@@ -55,6 +58,16 @@ public:
 
     /** Opens the terminal and runs each line as if typed (used by --run). */
     void runInTerminal (const juce::StringArray& lines);
+
+    /** The work views in the middle of the window. Switched by the ui.view command. */
+    enum class View
+    {
+        pattern,
+        mixer,
+    };
+    void showView (View view);
+    View currentView() const noexcept { return view; }
+    static std::optional<View> viewFromName (const juce::String& name);
 
     static constexpr int stepsPerPage = 16;
     static constexpr int maxPages = core::Pattern::maxSteps / stepsPerPage;
@@ -128,8 +141,10 @@ private:
     void selectPattern (int index);
     void selectChannel (int index);
     void showPage (int page);
-    void startRename();
+    void startRename (int channel); // -1 = the pattern
     void finishRename (bool keep);
+    void ensureChannelVisible (int channel);
+    void scrollRack (float delta);
     void layoutRack();
     void layoutKnobs();
     void toggleTerminal();
@@ -161,18 +176,24 @@ private:
     std::array<Knob, 11> knobs;
     Terminal terminal;
     bool terminalOpen = false;
+    LevelMeters meters;
+    MixerView mixer;
+    View view = View::pattern;
+    int renamingChannel = -1; // which name the rename editor is changing; -1 = the pattern's
 
     Snapshot shown;
     AudioStatus shownAudio;
     RackHit hovered;
-    int page = 0; // which 16 steps of the pattern the rack shows
+    int page = 0;            // which 16 steps of the pattern the rack shows
+    float rackScroll = 0.0f; // how far the rack is scrolled down, when its rows don't fit
     int timerTicks = 0;
 
     // Layout, computed in resized()
     juce::Rectangle<float> topBar, leftColumn, content;
     juce::Rectangle<float> projectArea, synthArea, keysArea, audioArea, sampleNameArea;
     juce::Rectangle<float> titleArea, metaArea, dividerArea, patternBarArea, gridArea, beatLabelArea, pageLabelArea;
-    juce::Rectangle<float> terminalArea;
+    juce::Rectangle<float> terminalArea, rackArea; // rackArea: where the rows are visible
+    float rackContentHeight = 0.0f;
     std::array<juce::Rectangle<float>, core::Session::maxPatterns> patternChips;
     std::array<juce::Rectangle<float>, stepsPerPage> columns; // x and width of each step column
     struct RowLayout

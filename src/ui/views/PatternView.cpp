@@ -24,7 +24,7 @@ namespace
 
     constexpr int stepsPerBeat = 4;
     constexpr float maxStepSize = 56.0f;
-    constexpr float minStepSize = 22.0f;
+    constexpr float minStepSize = 30.0f; // below this the rack scrolls instead of shrinking
     constexpr float pillWidth = 100.0f;
     constexpr float toggleSize = 20.0f; // the mute and solo boxes
     constexpr float rackLabelWidth = pillWidth + (space::unit + toggleSize) * 2.0f;
@@ -179,6 +179,8 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
             {} },
       } }
     , terminal (teknoLookAndFeel, registry)
+    , meters (sessionToShow)
+    , mixer (teknoLookAndFeel, sessionToShow, registry, meters)
 {
     setWantsKeyboardFocus (true);
 
@@ -189,10 +191,19 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
         button.setButtonText (views[i]);
         setRole (button, Role::nav);
         button.setMouseClickGrabsKeyboardFocus (false);
-        button.setEnabled (i == 0); // the other views arrive later in M3 and in M6
+        button.setEnabled (i == 0 || i == 2); // piano roll arrives later in M3, song in M6
         addAndMakeVisible (button);
     }
     navButtons[0].setToggleState (true, juce::dontSendNotification);
+    navButtons[0].onClick = [this] { run ("ui.view", { { "view", "pattern" } }); };
+    navButtons[2].onClick = [this] { run ("ui.view", { { "view", "mixer" } }); };
+
+    addChildComponent (mixer);
+    meters.onChange = [this]
+    {
+        if (mixer.isVisible())
+            mixer.metersChanged();
+    };
 
     swingChip.onChange = [this] (double percent) { run ("transport.swing", { { "percent", percent } }); };
     bpmChip.onChange = [this] (double bpm) { run ("transport.bpm", { { "bpm", bpm } }); };
@@ -352,6 +363,7 @@ void PatternView::timerCallback()
 
     if (now != shown)
     {
+        const auto selectionMoved = now.selectedChannel != shown.selectedChannel;
         const auto relayoutRack = now.channels != laidOutChannels || now.samplers != laidOutSamplers;
         const auto relayoutKnobs = now.isSampler (now.selectedChannel) != shown.isSampler (shown.selectedChannel) ||
                                    now.channels != shown.channels;
@@ -361,6 +373,8 @@ void PatternView::timerCallback()
             layoutRack();
         if (relayoutKnobs)
             layoutKnobs();
+        if (selectionMoved || relayoutRack) // from anywhere: a click, the terminal, undo
+            ensureChannelVisible (shown.selectedChannel);
         repaint();
     }
 }
@@ -448,11 +462,37 @@ void PatternView::resized()
         x += patternChipSize + ((p + 1) % 4 == 0 ? space::gap : space::unit);
     }
 
-    if (renameEditor.isVisible())
+    if (renameEditor.isVisible() && renamingChannel < 0)
         renameEditor.setBounds (titleArea.withTrimmedTop (titleArea.getHeight() - 56.0f).toNearestInt());
+
+    // The mixer takes everything under the divider; the pattern bank and rack belong to the pattern view.
+    mixer.setBounds (patternBarArea.getUnion (gridArea).toNearestInt());
+    mixer.setVisible (view == View::mixer);
+    lengthChip.setVisible (view == View::pattern);
 
     layoutKnobs();
     layoutRack();
+}
+
+std::optional<PatternView::View> PatternView::viewFromName (const juce::String& name)
+{
+    if (name == "pattern" || name == "rack" || name == "channels")
+        return View::pattern;
+    if (name == "mixer")
+        return View::mixer;
+    return std::nullopt;
+}
+
+void PatternView::showView (View newView)
+{
+    if (newView == view)
+        return;
+    finishRename (false);
+    view = newView;
+    navButtons[0].setToggleState (view == View::pattern, juce::dontSendNotification);
+    navButtons[2].setToggleState (view == View::mixer, juce::dontSendNotification);
+    resized();
+    repaint();
 }
 
 void PatternView::layoutKnobs()
@@ -529,6 +569,7 @@ void PatternView::layoutRack()
     beatLabelArea = g.removeFromTop (20.0f);
     pageLabelArea = beatLabelArea.withWidth (rackLabelWidth);
     g.removeFromTop (space::unit);
+    rackArea = g;
 
     const auto stepGap = space::unit;
     const auto gridWidth = g.getWidth() - rackLabelWidth - space::gutter;
@@ -551,7 +592,13 @@ void PatternView::layoutRack()
         sx += stepSize + ((col + 1) % stepsPerBeat == 0 ? space::gap : stepGap);
     }
 
-    auto y = g.getY();
+    // Rows that don't fit scroll: rackScroll moves them up, painting clips them to rackArea.
+    rackContentHeight = 0.0f;
+    for (int c = 0; c < shown.channels; ++c)
+        rackContentHeight += rowTop + stepSize + rowBottom (shown.isSampler (c)) + space::unit;
+    rackScroll = std::clamp (rackScroll, 0.0f, std::max (0.0f, rackContentHeight - g.getHeight()));
+
+    auto y = g.getY() - rackScroll;
     for (int c = 0; c < maxChannels; ++c)
     {
         auto& row = rows[static_cast<size_t> (c)];
@@ -637,12 +684,13 @@ void PatternView::paintLeftColumn (juce::Graphics& g) const
 
     auto keys = keysArea;
     drawText (g, "Keys", type::sectionTitle, ink, keys.removeFromTop (28.0f));
-    const std::array<std::pair<const char*, const char*>, 11> hints { {
+    const std::array<std::pair<const char*, const char*>, 12> hints { {
         { "Space", "play / stop" },
         { "Click", "step on / off" },
         { "Shift Ctrl Alt", "accent, slide, tie" },
         { "Wheel", "pitch" },
         { "Up / Down", "channel" },
+        { "F6 / F9", "pattern / mixer" },
         { "PgUp / PgDn", "pattern" },
         { "[  ]", "bar of the pattern" },
         { "Ctrl+Z / Y", "undo / redo" },
@@ -686,7 +734,29 @@ void PatternView::paintContent (juce::Graphics& g) const
     const auto muted = lnf.colour (&P::inkMuted);
     const auto line = lnf.colour (&P::line);
 
-    if (! renameEditor.isVisible())
+    const float dashes[] { shape::dashLength, shape::dashGap };
+    auto divider = [&]
+    {
+        g.setColour (line);
+        g.drawDashedLine ({ dividerArea.getX(), dividerArea.getY(), dividerArea.getRight(), dividerArea.getY() },
+                          dashes, 2, shape::lineWidth);
+    };
+
+    if (view == View::mixer)
+    {
+        drawText (g, "Mixer", type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
+        const auto masterDb = session.master.volumeDb.load();
+        drawText (g,
+                  juce::String (shown.channels) + (shown.channels == 1 ? " channel" : " channels") + "  /  master " +
+                      (masterDb <= core::MixerSettings::minVolumeDb ? juce::String ("off")
+                                                                    : juce::String (masterDb, 1) + " dB") +
+                      "  /  " + (shown.playing ? "playing" : "stopped"),
+                  type::meta, muted, metaArea);
+        divider();
+        return; // the MixerView component draws the rest
+    }
+
+    if (! (renameEditor.isVisible() && renamingChannel < 0))
         drawText (g, shown.patternName, type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
 
     auto meta = "Pattern " + juce::String (shown.selected + 1) + " of " + juce::String (Session::maxPatterns) +
@@ -698,11 +768,7 @@ void PatternView::paintContent (juce::Graphics& g) const
     else
         meta << "playing pattern " << (shown.playingPattern + 1) << ", this one starts at the next bar";
     drawText (g, meta, type::meta, muted, metaArea);
-
-    const float dashes[] { shape::dashLength, shape::dashGap };
-    g.setColour (line);
-    g.drawDashedLine ({ dividerArea.getX(), dividerArea.getY(), dividerArea.getRight(), dividerArea.getY() }, dashes, 2,
-                      shape::lineWidth);
+    divider();
 
     // Pattern bank: filled = editing, outline ink = holds something, dot under = playing.
     for (int p = 0; p < Session::maxPatterns; ++p)
@@ -750,8 +816,25 @@ void PatternView::paintContent (juce::Graphics& g) const
         g.fillEllipse (column.getCentreX() - d * 0.5f, beatLabelArea.getBottom() - d, d, d);
     }
 
-    for (int c = 0; c < shown.channels; ++c)
-        paintRow (g, c);
+    {
+        const juce::Graphics::ScopedSaveState clip (g);
+        g.reduceClipRegion (rackArea.toNearestInt());
+        for (int c = 0; c < shown.channels; ++c)
+            paintRow (g, c);
+    }
+
+    // When the rows don't fit: a thin bar on the right says how much is shown, and where.
+    if (rackContentHeight > rackArea.getHeight())
+    {
+        const auto track = rackArea.withLeft (rackArea.getRight() - space::unit);
+        const auto shownShare = rackArea.getHeight() / rackContentHeight;
+        const auto thumb = track.withHeight (track.getHeight() * shownShare)
+                               .withY (track.getY() + track.getHeight() * rackScroll / rackContentHeight);
+        g.setColour (line);
+        g.fillRoundedRectangle (track, track.getWidth() * 0.5f);
+        g.setColour (ink);
+        g.fillRoundedRectangle (thumb, track.getWidth() * 0.5f);
+    }
 }
 
 void PatternView::paintRow (juce::Graphics& g, int channel) const
@@ -871,6 +954,8 @@ void PatternView::paintStep (juce::Graphics& g, int channel, int column) const
 PatternView::RackHit PatternView::rackAt (juce::Point<float> position) const
 {
     using W = RackHit::What;
+    if (view != View::pattern || ! rackArea.contains (position))
+        return {};
     for (int c = 0; c < shown.channels; ++c)
     {
         const auto& row = rows[static_cast<size_t> (c)];
@@ -894,6 +979,8 @@ PatternView::RackHit PatternView::rackAt (juce::Point<float> position) const
 
 int PatternView::patternChipAt (juce::Point<float> position) const
 {
+    if (view != View::pattern)
+        return -1;
     for (int p = 0; p < Session::maxPatterns; ++p)
         if (patternChips[static_cast<size_t> (p)].contains (position))
             return p;
@@ -911,7 +998,32 @@ void PatternView::selectChannel (int index)
     if (shown.channels == 0)
         return;
     run ("channel.select", { { "channel", juce::jlimit (0, shown.channels - 1, index) + 1 } });
-    timerCallback();
+    timerCallback(); // also scrolls the rack to it
+}
+
+void PatternView::scrollRack (float delta)
+{
+    const auto before = rackScroll;
+    rackScroll += delta;
+    layoutRack(); // clamps
+    if (! juce::exactlyEqual (before, rackScroll))
+    {
+        hovered = {};
+        repaint();
+    }
+}
+
+void PatternView::ensureChannelVisible (int channel)
+{
+    if (channel < 0 || channel >= shown.channels)
+        return;
+    const auto& row = rows[static_cast<size_t> (channel)];
+    const auto top = row.stepY - rowTop;
+    const auto bottom = row.stepY + stepSize + rowBottom (shown.isSampler (channel));
+    if (top < rackArea.getY())
+        scrollRack (top - rackArea.getY());
+    else if (bottom > rackArea.getBottom())
+        scrollRack (bottom - rackArea.getBottom());
 }
 
 void PatternView::showPage (int newPage)
@@ -948,7 +1060,7 @@ void PatternView::mouseDown (const juce::MouseEvent& e)
         selectPattern (chip);
         return;
     }
-    if (pageLabelArea.contains (e.position))
+    if (view == View::pattern && pageLabelArea.contains (e.position))
     {
         const auto pages = (shown.length + stepsPerPage - 1) / stepsPerPage;
         showPage ((page + 1) % std::max (1, pages));
@@ -994,14 +1106,29 @@ void PatternView::mouseDown (const juce::MouseEvent& e)
 
 void PatternView::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    if (titleArea.contains (e.position))
-        startRename();
+    if (view != View::pattern)
+        return;
+    if (const auto hit = rackAt (e.position); hit.what == RackHit::What::pill)
+        startRename (hit.channel);
+    else if (titleArea.contains (e.position))
+        startRename (-1);
 }
 
-void PatternView::startRename()
+void PatternView::startRename (int channel)
 {
-    renameEditor.setText (shown.patternName, false);
-    renameEditor.setBounds (titleArea.withTrimmedTop (titleArea.getHeight() - 56.0f).toNearestInt());
+    renamingChannel = channel;
+    if (channel < 0)
+    {
+        renameEditor.setFont (lnf.fonts().font (type::viewTitle));
+        renameEditor.setText (shown.patternName, false);
+        renameEditor.setBounds (titleArea.withTrimmedTop (titleArea.getHeight() - 56.0f).toNearestInt());
+    }
+    else
+    {
+        renameEditor.setFont (lnf.fonts().font (type::meta));
+        renameEditor.setText (shown.channelNames[static_cast<size_t> (channel)], false);
+        renameEditor.setBounds (rows[static_cast<size_t> (channel)].pill.toNearestInt());
+    }
     renameEditor.setVisible (true);
     renameEditor.grabKeyboardFocus();
     renameEditor.selectAll();
@@ -1013,8 +1140,15 @@ void PatternView::finishRename (bool keep)
     if (! renameEditor.isVisible())
         return;
     renameEditor.setVisible (false);
-    if (keep && renameEditor.getText().trim() != shown.patternName)
-        run ("pattern.rename", { { "name", renameEditor.getText() } });
+    const auto text = renameEditor.getText().trim();
+    if (renamingChannel < 0)
+    {
+        if (keep && text != shown.patternName)
+            run ("pattern.rename", { { "name", text } });
+    }
+    else if (keep && text != shown.channelNames[static_cast<size_t> (renamingChannel)])
+        run ("channel.rename", { { "name", text }, { "channel", renamingChannel + 1 } });
+    renamingChannel = -1;
     grabKeyboardFocus();
     timerCallback();
     repaint();
@@ -1022,9 +1156,16 @@ void PatternView::finishRename (bool keep)
 
 void PatternView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
-    const auto hit = rackAt (e.position);
-    if (hit.what != RackHit::What::step || juce::exactlyEqual (wheel.deltaY, 0.0f))
+    if (juce::exactlyEqual (wheel.deltaY, 0.0f))
         return;
+    const auto hit = rackAt (e.position);
+    if (hit.what != RackHit::What::step)
+    {
+        // Off the steps, the wheel scrolls the rack (on a step it changes the pitch).
+        if (view == View::pattern && rackArea.contains (e.position))
+            scrollRack (-wheel.deltaY * 120.0f);
+        return;
+    }
 
     const auto interval = e.mods.isShiftDown() ? 12 : 1;
     const auto current =
@@ -1048,7 +1189,7 @@ bool PatternView::keyPressed (const juce::KeyPress& key)
         K key;
         std::function<void()> action;
     };
-    const std::array<Binding, 16> bindings { {
+    const std::array<Binding, 18> bindings { {
         { K ('`'), [this] { toggleTerminal(); } },
         { K (K::spaceKey), [this] { run ("transport.toggle"); } },
         { K ('t'), [this] { run ("ui.theme.toggle"); } },
@@ -1063,6 +1204,8 @@ bool PatternView::keyPressed (const juce::KeyPress& key)
         { K (K::pageDownKey), [this] { selectPattern (shown.selected + 1); } },
         { K (K::upKey), [this] { selectChannel (shown.selectedChannel - 1); } },
         { K (K::downKey), [this] { selectChannel (shown.selectedChannel + 1); } },
+        { K (K::F6Key), [this] { run ("ui.view", { { "view", "pattern" } }); } },
+        { K (K::F9Key), [this] { run ("ui.view", { { "view", "mixer" } }); } },
         { K ('['), [this] { showPage (page - 1); } },
         { K (']'), [this] { showPage (page + 1); } },
     } };

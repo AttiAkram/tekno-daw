@@ -12,6 +12,7 @@ add_executable(tekno_tests
     core/ProjectFileTests.cpp
     core/VersionTests.cpp
     ui/FontsTests.cpp
+    ui/MixerTests.cpp
     ui/PaletteTests.cpp
     ui/TokensTests.cpp)
 
@@ -56,14 +57,15 @@ if(TEKNO_GUI_TESTS)
     add_test(NAME app.smoke COMMAND tekno-daw --smoke-test ${gui_test_args})
     add_test(NAME app.snapshot.dark  COMMAND tekno-daw ${gui_test_args} --theme=dark  "--snapshot=${CMAKE_BINARY_DIR}/snapshots/pattern-dark.png")
     add_test(NAME app.snapshot.light COMMAND tekno-daw ${gui_test_args} --theme=light "--snapshot=${CMAKE_BINARY_DIR}/snapshots/pattern-light.png")
+    add_test(NAME app.snapshot.mixer COMMAND tekno-daw ${gui_test_args} --theme=dark --view=mixer "--snapshot=${CMAKE_BINARY_DIR}/snapshots/mixer-dark.png")
 
-    set_tests_properties(app.smoke app.snapshot.dark app.snapshot.light PROPERTIES
+    set_tests_properties(app.smoke app.snapshot.dark app.snapshot.light app.snapshot.mixer PROPERTIES
         TIMEOUT 30
         FAIL_REGULAR_EXPRESSION "${juce_failures}"
         RESOURCE_LOCK display)
 
     if(TEKNO_SANITIZERS)
-        set_tests_properties(app.smoke app.snapshot.dark app.snapshot.light PROPERTIES
+        set_tests_properties(app.smoke app.snapshot.dark app.snapshot.light app.snapshot.mixer PROPERTIES
             ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/sanitizers/lsan.supp:print_suppressions=0")
     endif()
 endif()

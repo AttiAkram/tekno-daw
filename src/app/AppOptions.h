@@ -28,6 +28,7 @@ struct AppOptions
     bool noAudio = false;                               // --no-audio         don't open an audio device
     juce::File project;                                 // <file.tekno>       open this project at start
     juce::StringArray run;                              // --run="a; b"       terminal commands to run at start
+    juce::String view;                                  // --view=mixer       the view to start on
     ui::tokens::Theme theme = ui::tokens::defaultTheme; // --theme=dark|light
     juce::StringArray errors;                           // unknown or malformed arguments
 

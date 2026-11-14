@@ -5,8 +5,10 @@ add_library(tekno_ui STATIC
     theme/Fonts.cpp
     theme/TeknoLookAndFeel.cpp
     components/IconButton.cpp
+    components/LevelMeters.cpp
     components/Terminal.cpp
     components/ValueChip.cpp
+    views/MixerView.cpp
     views/PatternView.cpp
     ProjectActions.cpp)
 add_library(tekno::ui ALIAS tekno_ui)

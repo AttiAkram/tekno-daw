@@ -53,6 +53,9 @@ public:
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
     void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height, float position, float startAngle,
                            float endAngle, juce::Slider&) override;
+    void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height, float sliderPos, float minSliderPos,
+                           float maxSliderPos, juce::Slider::SliderStyle, juce::Slider&) override;
+    int getSliderThumbRadius (juce::Slider&) override;
     juce::Font getLabelFont (juce::Label&) override;
     juce::Font getPopupMenuFont() override;
     juce::Typeface::Ptr getTypefaceForFont (const juce::Font&) override;
