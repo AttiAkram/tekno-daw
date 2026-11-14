@@ -1,0 +1,29 @@
+# --- build ---
+build/
+build-*/
+cmake-build-*/
+install/
+CMakeUserPresets.json
+
+# --- dependency and tooling caches ---
+.cache/
+compile_commands.json
+.ccls-cache/
+
+# --- editors / IDE ---
+.vscode/
+.idea/
+*.swp
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- audio renders / local scratch ---
+*.wav
+*.flac
+*.ogg
+*.mp3
+renders/
+scratch/

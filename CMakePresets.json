@@ -1,0 +1,89 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Dev (Debug)",
+      "description": "Everyday development: debug info, JUCE assertions, unit tests",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "release",
+      "displayName": "Release",
+      "description": "Optimised build with LTO, the one to make music with",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "asan",
+      "displayName": "Debug + AddressSanitizer/UBSan",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "TEKNO_SANITIZERS": "ON", "TEKNO_GUI_TESTS": "ON" }
+    },
+    {
+      "name": "clang",
+      "displayName": "Dev with Clang",
+      "inherits": "dev",
+      "cacheVariables": { "CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++" }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI",
+      "description": "What CI and the Docker build run: warnings are errors, GUI smoke test on",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "TEKNO_WARNINGS_AS_ERRORS": "ON",
+        "TEKNO_GUI_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev",     "configurePreset": "dev" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "asan",    "configurePreset": "asan" },
+    { "name": "clang",   "configurePreset": "clang" },
+    { "name": "ci",      "configurePreset": "ci" }
+  ],
+  "testPresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    { "name": "dev",   "inherits": "base", "configurePreset": "dev" },
+    { "name": "asan",  "inherits": "base", "configurePreset": "asan" },
+    { "name": "clang", "inherits": "base", "configurePreset": "clang" },
+    { "name": "ci",    "inherits": "base", "configurePreset": "ci" }
+  ],
+  "workflowPresets": [
+    {
+      "name": "dev",
+      "steps": [
+        { "type": "configure", "name": "dev" },
+        { "type": "build",     "name": "dev" },
+        { "type": "test",      "name": "dev" }
+      ]
+    },
+    {
+      "name": "ci",
+      "steps": [
+        { "type": "configure", "name": "ci" },
+        { "type": "build",     "name": "ci" },
+        { "type": "test",      "name": "ci" }
+      ]
+    }
+  ]
+}

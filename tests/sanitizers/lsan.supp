@@ -1,0 +1,7 @@
+# LeakSanitizer suppressions. Every entry must say why it is not our bug.
+#
+# libX11 caches its locale/text-conversion tables for the life of the process and never frees them.
+# JUCE reaches that code when it sets the window title (Xutf8TextListToTextProperty). Measured on
+# 2026-11-14: ~27 KB, allocated once, does not grow. Suppressed by the JUCE frame, so a real leak
+# anywhere else is still reported.
+leak:juce::XWindowSystem::setTitle

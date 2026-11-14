@@ -1,0 +1,4 @@
+# Keep the build context small. The Dockerfile copies only what the build needs.
+.git/
+build/
+.cache/
