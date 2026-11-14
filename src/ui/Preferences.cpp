@@ -97,6 +97,16 @@ void Preferences::setPreview (bool on)
     properties->setValue ("preview", on);
 }
 
+juce::String Preferences::tiles() const
+{
+    return properties->getValue ("tiles", {});
+}
+
+void Preferences::setTiles (const juce::String& layout)
+{
+    properties->setValue ("tiles", layout);
+}
+
 tokens::Theme Preferences::theme() const
 {
     const auto value = properties->getValue ("theme", {});

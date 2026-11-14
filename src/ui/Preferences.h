@@ -41,6 +41,9 @@ public:
     bool preview() const; // hear notes as they are placed (on by default)
     void setPreview (bool on);
 
+    juce::String tiles() const; // the panel layout, as TileLayout::toString; empty = one panel
+    void setTiles (const juce::String& layout);
+
     tokens::Theme theme() const;
     void setTheme (tokens::Theme theme);
 

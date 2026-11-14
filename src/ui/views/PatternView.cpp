@@ -206,6 +206,8 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
     navButtons[2].onClick = [this] { run ("ui.view", { { "view", "mixer" } }); };
 
     addChildComponent (pianoRoll);
+    for (auto* panel : std::initializer_list<juce::Component*> { &pianoRoll, &mixer, &keysEditor })
+        panel->addMouseListener (this, true); // a click inside a panel makes it the active one
     addChildComponent (keysEditor);
     keysEditor.onChange = [this]
     {
@@ -500,7 +502,23 @@ void PatternView::resized()
         c.removeFromBottom (space::gutter);
         terminal.setBounds (terminalArea.toNearestInt());
     }
-    gridArea = c;
+    tilesArea = c;
+
+    // Each open panel gets its tile; with more than one, a frame and some air inside it.
+    gridArea = {};
+    const auto framed = tiles.count() > 1;
+    for (const auto& tile : tiles.tiles (tilesArea, space::gap))
+    {
+        const auto inner = framed ? tile.bounds.reduced (space::gap) : tile.bounds;
+        if (tile.panel == View::pattern)
+            gridArea = inner;
+        else if (tile.panel == View::pianoRoll)
+            pianoRoll.setBounds (inner.toNearestInt());
+        else if (tile.panel == View::mixer)
+            mixer.setBounds (inner.toNearestInt());
+        else
+            keysEditor.setBounds (inner.toNearestInt());
+    }
 
     // Pattern bank: 16 squares in groups of 4, the length chip on the right.
     lengthChip.setBounds (patternBarArea.withLeft (patternBarArea.getRight() - 120.0f).toNearestInt());
@@ -515,29 +533,25 @@ void PatternView::resized()
     if (renameEditor.isVisible() && renamingChannel < 0)
         renameEditor.setBounds (titleArea.withTrimmedTop (titleArea.getHeight() - 56.0f).toNearestInt());
 
-    // The mixer takes everything under the divider; the pattern bank and rack belong to the pattern view.
-    mixer.setBounds (patternBarArea.getUnion (gridArea).toNearestInt());
-    mixer.setVisible (view == View::mixer);
-    pianoRoll.setBounds (gridArea.toNearestInt());
-    pianoRoll.setVisible (view == View::pianoRoll);
-    keysEditor.setBounds (patternBarArea.getUnion (gridArea).toNearestInt());
-    keysEditor.setVisible (view == View::keys);
+    mixer.setVisible (tiles.isOpen (View::mixer));
+    pianoRoll.setVisible (tiles.isOpen (View::pianoRoll));
+    keysEditor.setVisible (tiles.isOpen (View::keys));
     editKeysButton.setBounds (keysArea.withHeight (28.0f)
                                   .withLeft (keysArea.getRight() - 56.0f)
                                   .withSizeKeepingCentre (56.0f, shape::pillHeightCompact)
                                   .toNearestInt());
-    lengthChip.setVisible (view == View::pattern || view == View::pianoRoll);
+    lengthChip.setVisible (true);
 
     // Snap choices and the key, left of the length chip, only where they matter.
     auto snapArea = patternBarArea.withRight (lengthChip.getX() - space::gap);
     keyButton.setBounds (
         snapArea.removeFromRight (150.0f).withSizeKeepingCentre (150.0f, shape::pillHeight).toNearestInt());
-    keyButton.setVisible (view == View::pianoRoll);
+    keyButton.setVisible (tiles.isOpen (View::pianoRoll));
     snapArea.removeFromRight (space::gap);
     for (auto it = snapButtons.rbegin(); it != snapButtons.rend(); ++it)
     {
         it->setBounds (snapArea.removeFromRight (56.0f).toNearestInt());
-        it->setVisible (view == View::pianoRoll);
+        it->setVisible (tiles.isOpen (View::pianoRoll));
     }
 
     layoutKnobs();
@@ -617,28 +631,70 @@ void PatternView::setSnap (PianoRollView::Snap snap)
 
 std::optional<PatternView::View> PatternView::viewFromName (const juce::String& name)
 {
-    if (name == "pattern" || name == "rack" || name == "channels")
-        return View::pattern;
-    if (name == "pianoroll" || name == "piano" || name == "roll")
-        return View::pianoRoll;
-    if (name == "mixer")
-        return View::mixer;
-    if (name == "keys")
-        return View::keys;
-    return std::nullopt;
+    return TileLayout::panelFromName (name);
+}
+
+void PatternView::layoutChanged()
+{
+    const auto active = tiles.active();
+    navButtons[0].setToggleState (active == View::pattern, juce::dontSendNotification);
+    navButtons[1].setToggleState (active == View::pianoRoll, juce::dontSendNotification);
+    navButtons[2].setToggleState (active == View::mixer, juce::dontSendNotification);
+    resized();
+    repaint();
+    if (onLayoutChanged)
+        onLayoutChanged();
 }
 
 void PatternView::showView (View newView)
 {
-    if (newView == view)
-        return;
     finishRename (false);
-    view = newView;
-    navButtons[0].setToggleState (view == View::pattern, juce::dontSendNotification);
-    navButtons[1].setToggleState (view == View::pianoRoll, juce::dontSendNotification);
-    navButtons[2].setToggleState (view == View::mixer, juce::dontSendNotification);
-    resized();
-    repaint();
+    tiles.show (newView);
+    layoutChanged();
+}
+
+void PatternView::openTile (View panel)
+{
+    finishRename (false);
+    tiles.open (panel, tilesArea, space::gap);
+    layoutChanged();
+}
+
+bool PatternView::closeTile()
+{
+    const auto closed = tiles.close();
+    if (closed)
+        layoutChanged();
+    return closed;
+}
+
+void PatternView::focusTile (int direction)
+{
+    tiles.focusNext (direction);
+    layoutChanged();
+}
+
+void PatternView::singleTile()
+{
+    tiles.single();
+    layoutChanged();
+}
+
+void PatternView::setTiles (const TileLayout& layout)
+{
+    tiles = layout;
+    layoutChanged();
+}
+
+void PatternView::focusPanelAt (juce::Point<float> position)
+{
+    for (const auto& tile : tiles.tiles (tilesArea, space::gap))
+        if (tile.bounds.contains (position) && tile.panel != tiles.active())
+        {
+            tiles.focus (tile.panel);
+            layoutChanged();
+            return;
+        }
 }
 
 void PatternView::layoutKnobs()
@@ -728,7 +784,9 @@ void PatternView::layoutRack()
         extras += rowTop + rowBottom (shown.isSampler (c));
     const auto byHeight =
         std::floor ((g.getHeight() - extras - space::unit * static_cast<float> (rowCount - 1)) / rowCount);
-    stepSize = juce::jlimit (minStepSize, maxStepSize, juce::jmin (byWidth, byHeight));
+    // The height decides down to minStepSize (then the rack scrolls); a narrow panel can squeeze the
+    // steps further, so all 16 always fit across.
+    stepSize = juce::jlimit (16.0f, maxStepSize, juce::jmin (byWidth, juce::jmax (byHeight, minStepSize)));
 
     const auto left = g.getX() + rackLabelWidth + space::gutter;
     auto sx = left;
@@ -901,6 +959,29 @@ void PatternView::paintLeftColumn (juce::Graphics& g) const
     }
 }
 
+void PatternView::paintPatternHeader (juce::Graphics& g) const
+{
+    const auto ink = lnf.colour (&P::ink);
+    const auto muted = lnf.colour (&P::inkMuted);
+    if (! (renameEditor.isVisible() && renamingChannel < 0))
+        drawText (g, shown.patternName, type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
+
+    auto meta = "Pattern " + juce::String (shown.selected + 1) + " of " + juce::String (Session::maxPatterns) +
+                "  /  " + formatBpm (shown.bpm) + "  /  " + formatSwing (shown.swing) + "  /  ";
+    if (tiles.active() == View::pianoRoll && shown.channels > 0)
+        meta << shown.channelNames[static_cast<size_t> (shown.selectedChannel)] << "  /  ";
+    if (! shown.playing)
+        meta << "stopped";
+    else if (shown.playingPattern == shown.selected)
+        meta << "playing";
+    else
+        meta << "playing pattern " << (shown.playingPattern + 1) << ", this one starts at the next bar";
+    if (status.isNotEmpty() && juce::Time::getMillisecondCounter() < statusUntil)
+        drawText (g, status, type::meta, ink, metaArea);
+    else
+        drawText (g, meta, type::meta, muted, metaArea);
+}
+
 void PatternView::paintContent (juce::Graphics& g) const
 {
     const auto ink = lnf.colour (&P::ink);
@@ -915,18 +996,29 @@ void PatternView::paintContent (juce::Graphics& g) const
                           dashes, 2, shape::lineWidth);
     };
 
-    if (view == View::keys)
+    // The header speaks for the active panel; under it the pattern bank, then the panels.
+    const auto active = tiles.active();
+    auto paintFrames = [&]
+    {
+        if (tiles.count() < 2)
+            return;
+        for (const auto& tile : tiles.tiles (tilesArea, space::gap))
+        {
+            g.setColour (tile.panel == active ? ink : line);
+            g.drawRoundedRectangle (tile.bounds.reduced (shape::lineWidth * 0.5f), shape::contentRadius,
+                                    tile.panel == active ? shape::lineWidth * 1.5f : shape::lineWidth);
+        }
+    };
+
+    if (active == View::keys)
     {
         drawText (g, "Keys", type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
         drawText (g,
                   juce::String (static_cast<int> (keymap.all().size())) +
                       " keys  /  a key runs a command line, like the terminal  /  F6 to go back",
                   type::meta, muted, metaArea);
-        divider();
-        return; // the KeysView component draws the rest
     }
-
-    if (view == View::mixer)
+    else if (active == View::mixer)
     {
         drawText (g, "Mixer", type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
         const auto masterDb = session.master.volumeDb.load();
@@ -936,27 +1028,11 @@ void PatternView::paintContent (juce::Graphics& g) const
                                                                     : juce::String (masterDb, 1) + " dB") +
                       "  /  " + (shown.playing ? "playing" : "stopped"),
                   type::meta, muted, metaArea);
-        divider();
-        return; // the MixerView component draws the rest
     }
-
-    if (! (renameEditor.isVisible() && renamingChannel < 0))
-        drawText (g, shown.patternName, type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
-
-    auto meta = "Pattern " + juce::String (shown.selected + 1) + " of " + juce::String (Session::maxPatterns) +
-                "  /  " + formatBpm (shown.bpm) + "  /  " + formatSwing (shown.swing) + "  /  ";
-    if (view == View::pianoRoll && shown.channels > 0)
-        meta << shown.channelNames[static_cast<size_t> (shown.selectedChannel)] << "  /  ";
-    if (! shown.playing)
-        meta << "stopped";
-    else if (shown.playingPattern == shown.selected)
-        meta << "playing";
     else
-        meta << "playing pattern " << (shown.playingPattern + 1) << ", this one starts at the next bar";
-    if (status.isNotEmpty() && juce::Time::getMillisecondCounter() < statusUntil)
-        drawText (g, status, type::meta, ink, metaArea);
-    else
-        drawText (g, meta, type::meta, muted, metaArea);
+        paintPatternHeader (g);
+    divider();
+
     divider();
 
     // Pattern bank: filled = editing, outline ink = holds something, dot under = playing.
@@ -985,8 +1061,11 @@ void PatternView::paintContent (juce::Graphics& g) const
         }
     }
 
-    if (view == View::pianoRoll)
-        return; // the PianoRollView component draws the rest
+    if (! tiles.isOpen (View::pattern))
+    {
+        paintFrames();
+        return; // the panel components draw the rest
+    }
 
     // Above the rack: which bar is shown (when there is more than one), beat numbers, the playhead.
     const auto pages = (shown.length + stepsPerPage - 1) / stepsPerPage;
@@ -1027,6 +1106,7 @@ void PatternView::paintContent (juce::Graphics& g) const
         g.setColour (ink);
         g.fillRoundedRectangle (thumb, track.getWidth() * 0.5f);
     }
+    paintFrames();
 }
 
 void PatternView::paintRow (juce::Graphics& g, int channel) const
@@ -1180,7 +1260,7 @@ void PatternView::paintStep (juce::Graphics& g, int channel, int column) const
 PatternView::RackHit PatternView::rackAt (juce::Point<float> position) const
 {
     using W = RackHit::What;
-    if (view != View::pattern || ! rackArea.contains (position))
+    if (! tiles.isOpen (View::pattern) || ! rackArea.contains (position))
         return {};
     for (int c = 0; c < shown.channels; ++c)
     {
@@ -1205,8 +1285,6 @@ PatternView::RackHit PatternView::rackAt (juce::Point<float> position) const
 
 int PatternView::patternChipAt (juce::Point<float> position) const
 {
-    if (view == View::mixer)
-        return -1;
     for (int p = 0; p < Session::maxPatterns; ++p)
         if (patternChips[static_cast<size_t> (p)].contains (position))
             return p;
@@ -1263,8 +1341,42 @@ void PatternView::showPage (int newPage)
     }
 }
 
+void PatternView::mouseDrag (const juce::MouseEvent& e)
+{
+    if (e.eventComponent != this || draggingDivider.isEmpty())
+        return;
+    for (const auto& d : tiles.dividers (tilesArea, space::gap))
+        if (d.id == draggingDivider)
+        {
+            const auto ratio =
+                d.vertical
+                    ? (e.position.x - d.splitArea.getX() - space::gap * 0.5f) / (d.splitArea.getWidth() - space::gap)
+                    : (e.position.y - d.splitArea.getY() - space::gap * 0.5f) / (d.splitArea.getHeight() - space::gap);
+            tiles.setRatio (d.id, ratio);
+            resized();
+            repaint();
+        }
+}
+
+void PatternView::mouseUp (const juce::MouseEvent& e)
+{
+    if (e.eventComponent != this || draggingDivider.isEmpty())
+        return;
+    draggingDivider.clear();
+    if (onLayoutChanged)
+        onLayoutChanged();
+}
+
 void PatternView::mouseMove (const juce::MouseEvent& e)
 {
+    if (e.eventComponent != this)
+        return;
+    auto wanted = juce::MouseCursor::NormalCursor;
+    for (const auto& d : tiles.dividers (tilesArea, space::gap))
+        if (d.bounds.expanded (2.0f).contains (e.position))
+            wanted = d.vertical ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::UpDownResizeCursor;
+    setMouseCursor (wanted);
+
     const auto now = rackAt (e.position);
     if (now.what != hovered.what || now.channel != hovered.channel || now.step != hovered.step)
     {
@@ -1273,20 +1385,35 @@ void PatternView::mouseMove (const juce::MouseEvent& e)
     }
 }
 
-void PatternView::mouseExit (const juce::MouseEvent&)
+void PatternView::mouseExit (const juce::MouseEvent& e)
 {
+    if (e.eventComponent != this)
+        return;
     hovered = {};
     repaint();
 }
 
 void PatternView::mouseDown (const juce::MouseEvent& e)
 {
+    // Clicks inside a panel component reach us too (we listen to them): they only make it active.
+    focusPanelAt (e.getEventRelativeTo (this).position);
+    if (e.eventComponent != this)
+        return;
+
+    // A gap between tiles: drag it to resize.
+    for (const auto& d : tiles.dividers (tilesArea, space::gap))
+        if (d.bounds.expanded (2.0f).contains (e.position))
+        {
+            draggingDivider = d.id;
+            return;
+        }
+
     if (const auto chip = patternChipAt (e.position); chip >= 0)
     {
         selectPattern (chip);
         return;
     }
-    if (view == View::pattern && pageLabelArea.contains (e.position))
+    if (tiles.isOpen (View::pattern) && pageLabelArea.contains (e.position))
     {
         const auto pages = (shown.length + stepsPerPage - 1) / stepsPerPage;
         showPage ((page + 1) % std::max (1, pages));
@@ -1341,7 +1468,7 @@ void PatternView::mouseDown (const juce::MouseEvent& e)
 
 void PatternView::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    if (view != View::pattern)
+    if (e.eventComponent != this)
         return;
     if (const auto hit = rackAt (e.position); hit.what == RackHit::What::pill)
         startRename (hit.channel);
@@ -1391,13 +1518,15 @@ void PatternView::finishRename (bool keep)
 
 void PatternView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
+    if (e.eventComponent != this)
+        return; // a panel's own wheel
     if (juce::exactlyEqual (wheel.deltaY, 0.0f))
         return;
     const auto hit = rackAt (e.position);
     if (hit.what != RackHit::What::step)
     {
         // Off the steps, the wheel scrolls the rack (on a step it changes the pitch).
-        if (view == View::pattern && rackArea.contains (e.position))
+        if (tiles.isOpen (View::pattern) && rackArea.contains (e.position))
             scrollRack (-wheel.deltaY * 120.0f);
         return;
     }
@@ -1482,10 +1611,11 @@ juce::StringArray PatternView::activeKeyContexts() const
     juce::StringArray contexts;
     if (shown.channels > 0)
         contexts.add (shown.isSampler (shown.selectedChannel) ? "sampler" : "acid");
-    contexts.add (view == View::pianoRoll ? "pianoroll"
-                  : view == View::mixer   ? "mixer"
-                  : view == View::keys    ? "keys"
-                                          : "pattern");
+    const auto active = tiles.active();
+    contexts.add (active == View::pianoRoll ? "pianoroll"
+                  : active == View::mixer   ? "mixer"
+                  : active == View::keys    ? "keys"
+                                            : "pattern");
     contexts.add ("global");
     return contexts;
 }

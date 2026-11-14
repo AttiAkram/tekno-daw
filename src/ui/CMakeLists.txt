@@ -14,6 +14,7 @@ add_library(tekno_ui STATIC
     views/PianoRollView.cpp
     KeyBindings.cpp
     Preferences.cpp
+    TileLayout.cpp
     ProjectActions.cpp)
 add_library(tekno::ui ALIAS tekno_ui)
 

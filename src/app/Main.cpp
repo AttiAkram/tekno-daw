@@ -116,9 +116,15 @@ public:
         mainView->getPianoRoll().setScaleLock (preferences->scaleLock());
         mainView->getPianoRoll().setPreview (preferences->preview());
 
+        // The panels as they were last time, unless --view asks for one (tests and snapshots do).
         if (options.view.isNotEmpty())
+        {
             if (const auto outcome = commands.execute ("ui.view", { { "view", options.view } }); ! outcome.succeeded())
                 std::cerr << "tekno-daw: " << outcome.error << "\n";
+        }
+        else if (const auto saved = ui::TileLayout::fromString (preferences->tiles()))
+            mainView->setTiles (*saved);
+        mainView->onLayoutChanged = [this] { preferences->setTiles (mainView->getTiles().toString()); };
 
         auto startupCommands = options.run;
         startupCommands.trim();
@@ -283,6 +289,49 @@ private:
                    [this] { mainView->getPianoRoll().selectAll(); });
         addAction ("ui.roll.deselect", "Clear the piano roll's selection",
                    [this] { mainView->getPianoRoll().deselect(); });
+        auto panelArg = [] (const core::CommandArgs& args, juce::String& error) -> std::optional<ui::PatternView::View>
+        {
+            const auto name = args["panel"].toString().trim().toLowerCase();
+            const auto panel = ui::PatternView::viewFromName (name);
+            if (! panel)
+                error = "unknown panel '" + name + "': use pattern, pianoroll, mixer or keys";
+            return panel;
+        };
+        commands.add ({ "ui.tile",
+                        "Open a panel beside the active one: pattern, pianoroll, mixer or keys",
+                        { { "panel", core::CommandParam::Type::text, 0, 0, "pattern, pianoroll, mixer or keys" } },
+                        [this, panelArg] (const core::CommandArgs& args)
+                        {
+                            juce::String error;
+                            const auto panel = panelArg (args, error);
+                            if (! panel)
+                                return core::CommandOutcome::fail (error);
+                            if (mainView != nullptr)
+                                mainView->openTile (*panel);
+                            return core::CommandOutcome::ok();
+                        } });
+        commands.add ({ "ui.tile.close",
+                        "Close the active panel",
+                        {},
+                        [this] (const core::CommandArgs&)
+                        {
+                            if (mainView == nullptr || ! mainView->closeTile())
+                                return core::CommandOutcome::fail ("the last panel stays open");
+                            return core::CommandOutcome::ok();
+                        } });
+        commands.add ({ "ui.tile.focus",
+                        "Make the next or previous panel the active one",
+                        { { "direction", core::CommandParam::Type::text, 0, 0, "next or previous" } },
+                        [this] (const core::CommandArgs& args)
+                        {
+                            const auto direction = args["direction"].toString().trim().toLowerCase();
+                            if (direction != "next" && direction != "previous")
+                                return core::CommandOutcome::fail ("use next or previous");
+                            if (mainView != nullptr)
+                                mainView->focusTile (direction == "next" ? 1 : -1);
+                            return core::CommandOutcome::ok();
+                        } });
+        addAction ("ui.tile.single", "Keep only the active panel", [this] { mainView->singleTile(); });
         commands.add ({ "ui.page",
                         "Show the next or previous 16 steps of a long pattern",
                         { { "direction", core::CommandParam::Type::text, 0, 0, "next or previous" } },
@@ -378,7 +427,7 @@ private:
                             return core::CommandOutcome::ok();
                         } });
         commands.add ({ "ui.view",
-                        "Show a view: pattern (F6), pianoroll (F7) or mixer (F9)",
+                        "Show a panel where the active one is: pattern (F6), pianoroll (F7), mixer (F9) or keys (F10)",
                         { { "view", core::CommandParam::Type::text, 0, 0, "pattern, pianoroll or mixer" } },
                         [this] (const core::CommandArgs& args)
                         {

@@ -28,8 +28,8 @@ and project version history.
 | ✅ M0 | Foundations: build, tests, CI, visual theme, style preview |
 | ✅ M1 | MVP: an acid synth playing a 16-step pattern |
 | ✅ M2 | Real sequencer: patterns, accent / slide / tie, swing, project files, drive, terminal |
-| ▶ M3 | Channel rack, drum sampler, mixer, piano roll (✅ all four), keymaps, tiling panels |
-| M4 | VST3 hosting (out of process) and MIDI input |
+| ✅ M3 | Channel rack, drum sampler, mixer, piano roll, keymaps per context, tiling panels |
+| ▶ M4 | VST3 hosting (out of process) and MIDI input |
 | M5 | Audio export, full project format, more import formats |
 | M6 | Arrangement and automation |
 | M7 | Polish and packaging (AppImage, Flatpak, AUR) |
@@ -119,6 +119,15 @@ tekno-daw --run="bpm 138; swing 62"   open the terminal and run commands at star
 tekno-daw --smoke-test         open the window and quit after a second
 tekno-daw --version
 ```
+
+### Panels side by side
+
+The step sequencer, the piano roll, the mixer and the keys editor are panels, tiled like a tiling window
+manager: Alt+F6 / Alt+F7 / Alt+F9 / Alt+F10 open one beside the active panel (splitting it along its
+longer side), Alt+Q closes the active one, Alt+Left / Alt+Right move between them, and the gaps between
+panels can be dragged. F6 / F7 / F9 / F10 still swap the active panel for another. The active panel has a
+dark frame, and it decides which keys apply. The layout is remembered. From the terminal: `ui.tile mixer`,
+`ui.tile.close`, `ui.tile.focus next`, `ui.tile.single`.
 
 ### Your own keys
 

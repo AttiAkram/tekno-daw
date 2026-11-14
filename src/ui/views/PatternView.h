@@ -17,6 +17,7 @@
 #include "core/commands/CommandRegistry.h"
 #include "core/model/Session.h"
 #include "ui/ProjectActions.h"
+#include "ui/TileLayout.h"
 #include "ui/components/LevelMeters.h"
 #include "ui/components/Terminal.h"
 #include "ui/components/ValueChip.h"
@@ -57,6 +58,8 @@ public:
     void mouseExit (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     // Dropping a .mid file imports its melody (midi.import): on a rack row into that channel,
@@ -70,14 +73,8 @@ public:
     /** Opens the terminal and runs each line as if typed (used by --run). */
     void runInTerminal (const juce::StringArray& lines);
 
-    /** The work views in the middle of the window. Switched by the ui.view command. */
-    enum class View
-    {
-        pattern,
-        pianoRoll,
-        mixer,
-        keys, // the keys editor
-    };
+    /** The work panels in the middle of the window, tiled (ui.view, ui.tile...). */
+    using View = TileLayout::Panel;
     void showView (View view);
     void setSnap (PianoRollView::Snap snap);
     void toggleTerminal();
@@ -89,7 +86,16 @@ public:
     /** Where a key press looks, most specific first: the selected channel's instrument, the view, global. */
     juce::StringArray activeKeyContexts() const;
     PianoRollView& getPianoRoll() noexcept { return pianoRoll; }
-    View currentView() const noexcept { return view; }
+    View currentView() const noexcept { return tiles.active(); }
+
+    // Tiling: open a panel beside the active one, close the active one, move between them.
+    void openTile (View panel);
+    bool closeTile();
+    void focusTile (int direction);
+    void singleTile();
+    const TileLayout& getTiles() const noexcept { return tiles; }
+    void setTiles (const TileLayout& layout);
+    std::function<void()> onLayoutChanged; // the app saves the layout
     static std::optional<View> viewFromName (const juce::String& name);
 
     static constexpr int stepsPerPage = 16;
@@ -178,6 +184,7 @@ private:
     void paintTopBar (juce::Graphics&) const;
     void paintLeftColumn (juce::Graphics&) const;
     void paintContent (juce::Graphics&) const;
+    void paintPatternHeader (juce::Graphics&) const;
     void paintRow (juce::Graphics&, int channel) const;
     void paintStep (juce::Graphics&, int channel, int column) const;
     void paintBadge (juce::Graphics&, juce::Rectangle<float> area, bool ok, const juce::String& letter) const;
@@ -211,7 +218,11 @@ private:
     juce::TextButton keyButton; // the project's key: opens a menu of roots and scales
     void showKeyMenu();
     void showChannelMenu (int channel); // right-click on a channel's name
-    View view = View::pattern;
+    TileLayout tiles;
+    juce::Rectangle<float> tilesArea;
+    juce::String draggingDivider; // the split being resized, if any
+    void layoutChanged();
+    void focusPanelAt (juce::Point<float> position);
     int renamingChannel = -1; // which name the rename editor is changing; -1 = the pattern's
     int dropChannel = -1;     // where a dragged file would go; -1 = no file over the window
     juce::String status;      // a short message in place of the meta line, e.g. after an import

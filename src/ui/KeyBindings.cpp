@@ -75,6 +75,14 @@ core::Keymap defaults()
     add ("global", K (K::pageDownKey), "pattern.next", "next pattern");
     add ("global", K (K::upKey), "channel.previous", "previous channel");
     add ("global", K (K::downKey), "channel.next", "next channel");
+    const auto alt = M::altModifier;
+    add ("global", K (K::F6Key, alt, 0), "ui.tile pattern", "steps beside");
+    add ("global", K (K::F7Key, alt, 0), "ui.tile pianoroll", "piano roll beside");
+    add ("global", K (K::F9Key, alt, 0), "ui.tile mixer", "mixer beside");
+    add ("global", K (K::F10Key, alt, 0), "ui.tile keys", "keys beside");
+    add ("global", K ('q', alt, 0), "ui.tile.close", "close panel");
+    add ("global", K (K::rightKey, alt, 0), "ui.tile.focus next", "next panel");
+    add ("global", K (K::leftKey, alt, 0), "ui.tile.focus previous", "previous panel");
     add ("pattern", K ('['), "ui.page previous", "previous bar");
     add ("pattern", K (']'), "ui.page next", "next bar");
     add ("pianoroll", K ('c', ctrl, 0), "ui.roll.copy", "copy");
