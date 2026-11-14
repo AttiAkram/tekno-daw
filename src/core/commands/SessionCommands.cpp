@@ -18,13 +18,13 @@ namespace
 {
     using Type = CommandParam::Type;
 
-    const CommandParam stepParam { "step", Type::integer, 0, Pattern::maxSteps - 1, "step index, 0-63" };
+    const CommandParam stepParam { "step", Type::integer, 1, Pattern::maxSteps, "step number, 1-64" };
     const CommandParam onParam { "on", Type::boolean, 0, 1, "true or false" };
     const CommandParam pathParam { "path", Type::text, 0, 0, "path of a .tekno file" };
 
     int stepArg (const CommandArgs& args)
     {
-        return static_cast<int> (args["step"]);
+        return static_cast<int> (args["step"]) - 1; // commands count from 1, like people do
     }
 
     /** Changes one step of the selected pattern and returns how to put it back. */
@@ -40,17 +40,23 @@ namespace
                                    { session.pattern (patternIndex).setStep (index, before); });
     }
 
+    /** Sets an atomic and returns how to put the old value back. */
+    template <typename T, typename V> CommandOutcome setUndoable (std::atomic<T>& target, V newValue)
+    {
+        const auto before = target.load();
+        target.store (static_cast<T> (newValue));
+        return CommandOutcome::ok ([&target, before] { target.store (before); });
+    }
+
     void addSynthParam (CommandRegistry& registry, const char* id, const char* what, std::atomic<float>& target)
     {
         CommandDefinition def { id,
                                 what,
                                 { { "value", Type::number, 0, 1, "0..1" } },
                                 [&target] (const CommandArgs& args)
-                                {
-                                    target.store (static_cast<float> (static_cast<double> (args["value"])));
-                                    return CommandOutcome::ok();
-                                } };
+                                { return setUndoable (target, static_cast<double> (args["value"])); } };
         def.modifiesProject = true;
+        def.coalesce = true;
         registry.add (std::move (def));
     }
 
@@ -73,10 +79,11 @@ namespace
 
     /** Small helper so the long list below stays readable. */
     void add (CommandRegistry& registry, const char* id, const char* description, std::vector<CommandParam> params,
-              std::function<CommandOutcome (const CommandArgs&)> run, bool modifiesProject)
+              std::function<CommandOutcome (const CommandArgs&)> run, bool modifiesProject, bool coalesce = false)
     {
         CommandDefinition def { id, description, std::move (params), std::move (run) };
         def.modifiesProject = modifiesProject;
+        def.coalesce = coalesce;
         registry.add (std::move (def));
     }
 } // namespace
@@ -115,20 +122,12 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
         registry, "transport.bpm", "Set the tempo",
         { { "bpm", Type::number, TransportState::minBpm, TransportState::maxBpm, "beats per minute" } },
         [&transport] (const CommandArgs& args)
-        {
-            transport.bpm.store (static_cast<double> (args["bpm"]));
-            return CommandOutcome::ok();
-        },
-        true);
+        { return setUndoable (transport.bpm, static_cast<double> (args["bpm"])); }, true, true);
     add (
         registry, "transport.swing", "Set the swing (MPC style: 50 straight, 66 triplet, 75 dotted)",
         { { "percent", Type::number, TransportState::minSwing, TransportState::maxSwing, "50..75" } },
         [&transport] (const CommandArgs& args)
-        {
-            transport.swing.store (static_cast<float> (static_cast<double> (args["percent"])));
-            return CommandOutcome::ok();
-        },
-        true);
+        { return setUndoable (transport.swing, static_cast<double> (args["percent"])); }, true, true);
 
     // --- patterns -------------------------------------------------------------------------------
     add (
@@ -152,7 +151,7 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
             session.pattern (index).setLength (static_cast<int> (args["steps"]));
             return CommandOutcome::ok ([&session, index, before] { session.pattern (index).setLength (before); });
         },
-        true);
+        true, true);
     add (
         registry, "pattern.rename", "Rename the selected pattern", { { "name", Type::text, 0, 0, "new name" } },
         [&session] (const CommandArgs& args)
@@ -250,15 +249,11 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
     addSynthParam (registry, "synth.envmod", "How far the envelope opens the filter", synth.envMod);
     addSynthParam (registry, "synth.decay", "How fast the filter envelope closes", synth.decay);
     addSynthParam (registry, "synth.accent", "How hard accented steps hit", synth.accent);
+    addSynthParam (registry, "synth.drive", "Distortion after the filter, the acid pedal", synth.drive);
     add (
         registry, "synth.waveform", "Choose the oscillator: saw or square",
-        { { "square", Type::boolean, 0, 1, "true = square, false = saw" } },
-        [&synth] (const CommandArgs& args)
-        {
-            synth.square.store (static_cast<bool> (args["square"]));
-            return CommandOutcome::ok();
-        },
-        true);
+        { { "square", Type::boolean, 0, 1, "true = square, false = saw" } }, [&synth] (const CommandArgs& args)
+        { return setUndoable (synth.square, static_cast<bool> (args["square"])); }, true);
 
     // --- project --------------------------------------------------------------------------------
     add (

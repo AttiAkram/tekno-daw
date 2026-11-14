@@ -16,6 +16,7 @@
 #include "core/commands/CommandRegistry.h"
 #include "core/model/Session.h"
 #include "ui/ProjectActions.h"
+#include "ui/components/Terminal.h"
 #include "ui/components/ValueChip.h"
 #include "ui/theme/TeknoLookAndFeel.h"
 
@@ -50,6 +51,9 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+
+    /** Opens the terminal and runs each line as if typed (used by --run). */
+    void runInTerminal (const juce::StringArray& lines);
 
     static constexpr int stepsPerRow = 16;
     static constexpr int maxRows = core::Pattern::maxSteps / stepsPerRow;
@@ -91,6 +95,7 @@ private:
     void startRename();
     void finishRename (bool keep);
     void layoutSteps();
+    void toggleTerminal();
 
     void paintTopBar (juce::Graphics&) const;
     void paintLeftColumn (juce::Graphics&) const;
@@ -113,7 +118,9 @@ private:
     juce::TextButton waveButton { "saw" };
     juce::TextButton newButton { "new" }, openButton { "open" }, saveButton { "save" };
     juce::TextEditor renameEditor;
-    std::array<Knob, 5> knobs;
+    std::array<Knob, 6> knobs;
+    Terminal terminal;
+    bool terminalOpen = false;
 
     Snapshot shown;
     AudioStatus shownAudio;
@@ -124,6 +131,7 @@ private:
     juce::Rectangle<float> topBar, leftColumn, content;
     juce::Rectangle<float> projectArea, synthArea, keysArea, audioArea;
     juce::Rectangle<float> titleArea, metaArea, dividerArea, patternBarArea, gridArea, beatLabelArea, chipArea;
+    juce::Rectangle<float> terminalArea;
     std::array<juce::Rectangle<float>, core::Session::maxPatterns> patternChips;
     std::array<juce::Rectangle<float>, core::Pattern::maxSteps> stepAreas;
     int laidOutLength = -1;

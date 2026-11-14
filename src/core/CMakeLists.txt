@@ -7,6 +7,7 @@ add_library(tekno_core STATIC
     model/NoteNames.cpp
     model/Pattern.cpp
     model/Session.cpp
+    commands/CommandLine.cpp
     commands/CommandRegistry.cpp
     commands/SessionCommands.cpp
     dsp/AcidVoice.cpp

@@ -27,10 +27,10 @@ TEST_CASE ("unknown commands and bad arguments are rejected with a reason", "[co
     Fixture f;
     CHECK (f.registry.execute ("nope").error.contains ("unknown command"));
     CHECK (f.registry.execute ("pattern.step.toggle").error.contains ("missing argument"));
-    CHECK (f.registry.execute ("pattern.step.toggle", { { "step", 64 } }).error.contains ("between"));
+    CHECK (f.registry.execute ("pattern.step.toggle", { { "step", 65 } }).error.contains ("between"));
     CHECK (f.registry.execute ("pattern.step.toggle", { { "step", 2.5 } }).error.contains ("whole number"));
     CHECK (f.registry.execute ("pattern.step.toggle", { { "step", "x" } }).error.contains ("number"));
-    CHECK (f.registry.execute ("pattern.step.toggle", { { "step", 1 }, { "extra", 1 } })
+    CHECK (f.registry.execute ("pattern.step.toggle", { { "step", 2 }, { "extra", 1 } })
                .error.contains ("unknown argument"));
     CHECK (f.registry.execute ("transport.bpm", { { "bpm", 1000 } }).error.isNotEmpty());
     CHECK_FALSE (f.registry.canUndo()); // failures never enter the history
@@ -41,7 +41,7 @@ TEST_CASE ("pattern edits can be undone and redone", "[core][commands]")
     Fixture f;
     const auto original = f.session.pattern (0).getStep (1);
 
-    REQUIRE (f.registry.execute ("pattern.step.toggle", { { "step", 1 } }).succeeded());
+    REQUIRE (f.registry.execute ("pattern.step.toggle", { { "step", 2 } }).succeeded());
     CHECK (f.session.pattern (0).getStep (1).on != original.on);
 
     REQUIRE (f.registry.execute ("edit.undo").succeeded());
@@ -54,10 +54,10 @@ TEST_CASE ("pattern edits can be undone and redone", "[core][commands]")
 TEST_CASE ("a new edit clears the redo history", "[core][commands]")
 {
     Fixture f;
-    f.registry.execute ("pattern.step.note", { { "step", 0 }, { "note", 60 } });
+    f.registry.execute ("pattern.step.note", { { "step", 1 }, { "note", 60 } });
     f.registry.undo();
     REQUIRE (f.registry.canRedo());
-    f.registry.execute ("pattern.step.accent", { { "step", 3 }, { "on", true } });
+    f.registry.execute ("pattern.step.accent", { { "step", 4 }, { "on", true } });
     CHECK_FALSE (f.registry.canRedo());
 }
 
@@ -65,8 +65,8 @@ TEST_CASE ("accent and slide turn a step on", "[core][commands]")
 {
     Fixture f;
     f.registry.execute ("pattern.clear");
-    f.registry.execute ("pattern.step.accent", { { "step", 5 }, { "on", true } });
-    f.registry.execute ("pattern.step.slide", { { "step", 6 }, { "on", true } });
+    f.registry.execute ("pattern.step.accent", { { "step", 6 }, { "on", true } });
+    f.registry.execute ("pattern.step.slide", { { "step", 7 }, { "on", true } });
     CHECK (f.session.pattern (0).getStep (5).on);
     CHECK (f.session.pattern (0).getStep (5).accent);
     CHECK (f.session.pattern (0).getStep (6).on);
@@ -78,7 +78,7 @@ TEST_CASE ("accent and slide turn a step on", "[core][commands]")
     CHECK (f.session.pattern (0).getStep (0).on); // the default line is back
 }
 
-TEST_CASE ("transport and synth commands change the shared state but not the history", "[core][commands]")
+TEST_CASE ("transport and synth commands change the shared state", "[core][commands]")
 {
     Fixture f;
     f.registry.execute ("transport.play");
@@ -91,7 +91,7 @@ TEST_CASE ("transport and synth commands change the shared state but not the his
     CHECK (f.session.synth.cutoff.load() == 0.9f);
     f.registry.execute ("synth.waveform", { { "square", true } });
     CHECK (f.session.synth.square.load());
-    CHECK_FALSE (f.registry.canUndo());
+    CHECK (f.registry.canUndo()); // saved in the project, so undoable
 }
 
 TEST_CASE ("every command describes itself", "[core][commands]")
@@ -114,7 +114,7 @@ TEST_CASE ("pattern commands act on the selected pattern", "[core][commands]")
     CHECK (f.session.selected.load() == 2);
     CHECK (f.session.playing.load() == 2); // stopped: immediate
 
-    f.registry.execute ("pattern.step.toggle", { { "step", 40 } });
+    f.registry.execute ("pattern.step.toggle", { { "step", 41 } });
     f.registry.execute ("pattern.length", { { "steps", 48 } });
     f.registry.execute ("pattern.rename", { { "name", "  rumble  " } });
     CHECK (f.session.pattern (2).getStep (40).on);
@@ -135,10 +135,64 @@ TEST_CASE ("pattern commands act on the selected pattern", "[core][commands]")
 TEST_CASE ("tie and swing commands", "[core][commands]")
 {
     Fixture f;
-    f.registry.execute ("pattern.step.tie", { { "step", 1 }, { "on", true } });
+    f.registry.execute ("pattern.step.tie", { { "step", 2 }, { "on", true } });
     CHECK (f.session.pattern (0).getStep (1).tie);
     CHECK (f.session.pattern (0).getStep (1).on);
     f.registry.execute ("transport.swing", { { "percent", 66 } });
     CHECK (f.session.transport.swing.load() == 66.0f);
     CHECK (f.registry.execute ("transport.swing", { { "percent", 80 } }).error.isNotEmpty());
+}
+
+TEST_CASE ("a knob drag is one undo step back to where it started", "[core][commands][undo]")
+{
+    Fixture f;
+    const auto start = f.session.synth.cutoff.load();
+
+    f.registry.beginGesture();
+    for (int i = 1; i <= 30; ++i)
+        f.registry.execute ("synth.cutoff", { { "value", i / 30.0 } });
+    f.registry.endGesture();
+    CHECK (f.session.synth.cutoff.load() == 1.0f);
+
+    REQUIRE (f.registry.undo());
+    CHECK (f.session.synth.cutoff.load() == start); // the whole drag, in one step
+    CHECK_FALSE (f.registry.canUndo());
+    REQUIRE (f.registry.redo());
+    CHECK (f.session.synth.cutoff.load() == 1.0f); // redo goes to where the drag ended
+}
+
+TEST_CASE ("without a gesture, every change is its own undo step", "[core][commands][undo]")
+{
+    Fixture f;
+    f.registry.execute ("transport.bpm", { { "bpm", 140 } });
+    f.registry.execute ("transport.bpm", { { "bpm", 150 } });
+    f.registry.undo();
+    CHECK (f.session.transport.bpm.load() == 140.0);
+    f.registry.undo();
+    CHECK (f.session.transport.bpm.load() == TransportState::defaultBpm);
+}
+
+TEST_CASE ("one gesture never merges different controls", "[core][commands][undo]")
+{
+    Fixture f;
+    f.registry.beginGesture();
+    f.registry.execute ("synth.cutoff", { { "value", 0.9 } });
+    f.registry.execute ("synth.drive", { { "value", 0.5 } });
+    f.registry.execute ("synth.cutoff", { { "value", 0.1 } });
+    f.registry.endGesture();
+    f.registry.undo(); // the second cutoff run is separate: drive came in between
+    CHECK (f.session.synth.cutoff.load() == 0.9f);
+    f.registry.undo();
+    CHECK (f.session.synth.drive.load() == 0.0f);
+}
+
+TEST_CASE ("steps are numbered from 1, like patterns", "[core][commands]")
+{
+    Fixture f;
+    f.registry.execute ("pattern.clear");
+    REQUIRE (f.registry.execute ("pattern.step.toggle", { { "step", 1 } }).succeeded());
+    CHECK (f.session.pattern (0).getStep (0).on);
+    CHECK (f.registry.execute ("pattern.step.toggle", { { "step", 0 } }).error.contains ("between"));
+    REQUIRE (f.registry.execute ("pattern.step.toggle", { { "step", 64 } }).succeeded());
+    CHECK (f.session.pattern (0).getStep (63).on);
 }

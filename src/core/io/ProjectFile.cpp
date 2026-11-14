@@ -61,7 +61,8 @@ namespace
         double bpm = TransportState::defaultBpm;
         float swing = TransportState::minSwing;
         float cutoff = AcidParams::defaultCutoff, resonance = AcidParams::defaultResonance,
-              envMod = AcidParams::defaultEnvMod, decay = AcidParams::defaultDecay, accent = AcidParams::defaultAccent;
+              envMod = AcidParams::defaultEnvMod, decay = AcidParams::defaultDecay, accent = AcidParams::defaultAccent,
+              drive = AcidParams::defaultDrive;
         bool square = false;
         int selected = 0;
         std::array<PatternData, Session::maxPatterns> patterns {};
@@ -159,6 +160,7 @@ namespace
         data.envMod = knob ("envMod", data.envMod);
         data.decay = knob ("decay", data.decay);
         data.accent = knob ("accent", data.accent);
+        data.drive = knob ("drive", data.drive);
         const auto waveform = r.text (synth, "waveform", "synth", "saw");
         if (waveform != "saw" && waveform != "square")
             r.fail ("synth.waveform", "'" + waveform + "' must be \"saw\" or \"square\"");
@@ -232,6 +234,7 @@ namespace
         synth.envMod = data.envMod;
         synth.decay = data.decay;
         synth.accent = data.accent;
+        synth.drive = data.drive;
         synth.square = data.square;
 
         for (int i = 0; i < Session::maxPatterns; ++i)
@@ -269,6 +272,7 @@ juce::String toText (const Session& session)
     lines.add ("    \"envMod\": " + number (p.envMod.load()) + ",");
     lines.add ("    \"decay\": " + number (p.decay.load()) + ",");
     lines.add ("    \"accent\": " + number (p.accent.load()) + ",");
+    lines.add ("    \"drive\": " + number (p.drive.load()) + ",");
     lines.add ("    \"waveform\": " + quoted (p.square.load() ? "square" : "saw"));
     lines.add ("  },");
     lines.add ("  \"selectedPattern\": " + juce::String (session.selected.load() + 1) + ",");

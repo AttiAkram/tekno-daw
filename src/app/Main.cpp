@@ -85,10 +85,16 @@ public:
         else
             startAudio();
 
-        mainWindow = std::make_unique<MainWindow> (getApplicationName(), *lookAndFeel,
-                                                   std::make_unique<ui::PatternView> (*lookAndFeel, session, commands,
-                                                                                      *projectActions, [this]
-                                                                                      { return audioStatus(); }));
+        auto view = std::make_unique<ui::PatternView> (*lookAndFeel, session, commands, *projectActions,
+                                                       [this] { return audioStatus(); });
+        auto* viewPtr = view.get();
+        mainWindow = std::make_unique<MainWindow> (getApplicationName(), *lookAndFeel, std::move (view));
+
+        auto startupCommands = options.run;
+        startupCommands.trim();
+        startupCommands.removeEmptyStrings();
+        if (! startupCommands.isEmpty())
+            viewPtr->runInTerminal (startupCommands);
 
         if (options.snapshot != juce::File())
             juce::Timer::callAfterDelay (750, [this, file = options.snapshot] { writeSnapshotAndQuit (file); });

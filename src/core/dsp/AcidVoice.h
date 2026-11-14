@@ -12,8 +12,12 @@
 
 namespace tekno::core::dsp
 {
-/** The 303-style monophonic voice, v0: oscillator -> resonant lowpass -> amp, with a decaying
+/** The 303-style monophonic voice: oscillator -> resonant lowpass -> amp -> drive, with a decaying
     filter envelope, accent and slide. Real-time safe: no allocation, no locks.
+
+    The drive is the acid "pedal": a tanh waveshaper with first-order anti-derivative antialiasing
+    (ADAA), so it can be pushed hard without the fizz of aliasing, then a tone filter that darkens as
+    the drive rises. At drive 0 it is the old soft ceiling.
 
     All controls are normalised 0..1 (AcidParams); the mapping to Hz and seconds lives here. */
 class AcidVoice
@@ -27,6 +31,7 @@ public:
         float decay = 0.45f;
         float accent = 0.7f;
         bool square = false;
+        float drive = 0.0f;
     };
 
     void prepare (double sampleRate) noexcept;
@@ -63,5 +68,10 @@ private:
     float filterEnv = 0.0f, filterEnvDecay = 0.0f;
     float amp = 0.0f, ampHold = 0.0f, ampHoldDecay = 0.0f;
     float attack = 0.0f, release = 0.0f;
+
+    double shaperPrevious = 0.0; // last input of the ADAA waveshaper
+    float toneState = 0.0f;
+
+    float shape (double input) noexcept;
 };
 } // namespace tekno::core::dsp

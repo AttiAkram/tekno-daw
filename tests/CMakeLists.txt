@@ -4,7 +4,9 @@ include(Catch)
 
 add_executable(tekno_tests
     core/AudioEngineTests.cpp
+    core/CommandLineTests.cpp
     core/CommandTests.cpp
+    core/DriveTests.cpp
     core/PatternTests.cpp
     core/ProjectFileTests.cpp
     core/VersionTests.cpp

@@ -55,6 +55,7 @@ struct CommandDefinition
     std::vector<CommandParam> params;
     std::function<CommandOutcome (const CommandArgs&)> run;
     bool modifiesProject = false; // true when its effect is saved in the project file
+    bool coalesce = false;        // repeated runs inside one gesture (a knob drag) undo as one step
 };
 
 /** The single entry point for every action that changes the DAW (ADR 0014). Mouse, keyboard,
@@ -79,6 +80,16 @@ public:
         undo/redo of one. The session uses it to know there are unsaved changes. */
     std::function<void()> onProjectModified;
 
+    /** A gesture groups continuous changes (dragging a knob, a tempo pill): every run of the same
+        coalescing command between begin and end becomes ONE undo step, back to the value before the
+        gesture. Outside a gesture each run is its own step (e.g. one terminal command). */
+    void beginGesture() noexcept
+    {
+        ++gestureCounter;
+        gestureOpen = true;
+    }
+    void endGesture() noexcept { gestureOpen = false; }
+
     /** Forget undo/redo history, e.g. after opening another project. */
     void clearHistory() noexcept
     {
@@ -97,6 +108,7 @@ private:
         juce::String id;
         CommandArgs args;
         std::function<void()> undo;
+        std::uint64_t gesture = 0; // 0 = not part of a gesture
     };
 
     static juce::String validate (const CommandDefinition&, const CommandArgs&);
@@ -105,5 +117,7 @@ private:
 
     std::map<juce::String, CommandDefinition> commands;
     std::vector<HistoryEntry> undoStack, redoStack;
+    std::uint64_t gestureCounter = 0;
+    bool gestureOpen = false;
 };
 } // namespace tekno::core

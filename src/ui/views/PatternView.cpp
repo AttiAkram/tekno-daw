@@ -25,7 +25,8 @@ namespace
     constexpr float maxStepSize = 64.0f;
     constexpr float minStepSize = 28.0f;
     constexpr float chipWidth = 112.0f;
-    constexpr float knobSize = 52.0f;
+    constexpr float knobSize = 48.0f;
+    constexpr float terminalHeight = 220.0f;
     constexpr float accentMarkHeight = 3.0f;
     constexpr float rowExtra = 52.0f; // accent mark above, slide line + note name below
     constexpr float patternChipSize = 28.0f;
@@ -54,13 +55,17 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
     , bpmChip (core::TransportState::minBpm, core::TransportState::maxBpm, core::TransportState::defaultBpm, formatBpm)
     , lengthChip (1, Pattern::maxSteps, Pattern::defaultLength,
                   [] (double steps) { return juce::String (juce::roundToInt (steps)) + " steps"; })
-    , knobs {
-        { { "cutoff", "synth.cutoff", &sessionToShow.synth.cutoff, core::AcidParams::defaultCutoff, {} },
-          { "resonance", "synth.resonance", &sessionToShow.synth.resonance, core::AcidParams::defaultResonance, {} },
-          { "env mod", "synth.envmod", &sessionToShow.synth.envMod, core::AcidParams::defaultEnvMod, {} },
-          { "decay", "synth.decay", &sessionToShow.synth.decay, core::AcidParams::defaultDecay, {} },
-          { "accent", "synth.accent", &sessionToShow.synth.accent, core::AcidParams::defaultAccent, {} } }
-    }
+    , knobs { { { "cutoff", "synth.cutoff", &sessionToShow.synth.cutoff, core::AcidParams::defaultCutoff, {} },
+                { "resonance",
+                  "synth.resonance",
+                  &sessionToShow.synth.resonance,
+                  core::AcidParams::defaultResonance,
+                  {} },
+                { "env mod", "synth.envmod", &sessionToShow.synth.envMod, core::AcidParams::defaultEnvMod, {} },
+                { "decay", "synth.decay", &sessionToShow.synth.decay, core::AcidParams::defaultDecay, {} },
+                { "accent", "synth.accent", &sessionToShow.synth.accent, core::AcidParams::defaultAccent, {} },
+                { "drive", "synth.drive", &sessionToShow.synth.drive, core::AcidParams::defaultDrive, {} } } }
+    , terminal (teknoLookAndFeel, registry)
 {
     setWantsKeyboardFocus (true);
 
@@ -80,7 +85,11 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
     bpmChip.onChange = [this] (double bpm) { run ("transport.bpm", { { "bpm", bpm } }); };
     lengthChip.onChange = [this] (double steps) { run ("pattern.length", { { "steps", juce::roundToInt (steps) } }); };
     for (auto* chip : { &swingChip, &bpmChip, &lengthChip })
+    {
+        chip->onDragStart = [this] { commands.beginGesture(); }; // a whole drag = one undo step
+        chip->onDragEnd = [this] { commands.endGesture(); };
         addAndMakeVisible (chip);
+    }
 
     setRole (playButton, Role::primary);
     playButton.onClick = [this] { run ("transport.toggle"); };
@@ -105,6 +114,8 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
         s.setValue (knob.value->load(), juce::dontSendNotification);
         s.setMouseClickGrabsKeyboardFocus (false);
         s.onValueChange = [this, &knob] { run (knob.command, { { "value", knob.slider.getValue() } }); };
+        s.onDragStart = [this] { commands.beginGesture(); }; // a whole drag = one undo step
+        s.onDragEnd = [this] { commands.endGesture(); };
         addAndMakeVisible (s);
     }
 
@@ -114,6 +125,11 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
     renameEditor.onEscapeKey = [this] { finishRename (false); };
     renameEditor.onFocusLost = [this] { finishRename (true); };
     addChildComponent (renameEditor);
+
+    terminal.onCommandRun = [this] { timerCallback(); };
+    terminal.onEscape = [this] { grabKeyboardFocus(); };
+    terminal.onToggleKey = [this] { toggleTerminal(); };
+    addChildComponent (terminal);
 
     shown = takeSnapshot();
     shownAudio = audioStatus ? audioStatus() : AudioStatus {};
@@ -251,20 +267,23 @@ void PatternView::resized()
         buttons.removeFromLeft (space::unit);
     }
 
+    // Knobs in a 3-column grid; the waveform switch takes the last row.
     auto knobGrid = synthArea.withTrimmedTop (36.0f);
-    const auto cellWidth = knobGrid.getWidth() * 0.5f;
-    constexpr float cellHeight = 92.0f;
-    for (size_t i = 0; i <= knobs.size(); ++i)
+    constexpr int columns = 3;
+    const auto cellWidth = knobGrid.getWidth() / columns;
+    constexpr float cellHeight = 84.0f;
+    for (size_t i = 0; i < knobs.size(); ++i)
     {
-        const auto cell =
-            juce::Rectangle<float> (knobGrid.getX() + cellWidth * static_cast<float> (i % 2),
-                                    knobGrid.getY() + cellHeight * static_cast<float> (i / 2), cellWidth, cellHeight);
-        const auto top = cell.withHeight (knobSize + 8.0f);
-        if (i < knobs.size())
-            knobs[i].slider.setBounds (top.withSizeKeepingCentre (knobSize, knobSize).toNearestInt());
-        else // the sixth cell holds the waveform switch
-            waveButton.setBounds (top.withSizeKeepingCentre (cellWidth - space::gap, shape::pillHeight).toNearestInt());
+        const auto cell = juce::Rectangle<float> (knobGrid.getX() + cellWidth * static_cast<float> (i % columns),
+                                                  knobGrid.getY() + cellHeight * static_cast<float> (i / columns),
+                                                  cellWidth, cellHeight);
+        knobs[i].slider.setBounds (
+            cell.withHeight (knobSize + 8.0f).withSizeKeepingCentre (knobSize, knobSize).toNearestInt());
     }
+    const auto lastRow = knobGrid.getY() + cellHeight * static_cast<float> ((knobs.size() + columns - 1) / columns);
+    waveButton.setBounds (
+        juce::Rectangle<float> (knobGrid.getX(), lastRow, cellWidth * 2.0f - space::gap, shape::pillHeight)
+            .toNearestInt());
 
     // Content: title, metadata, dashed divider, pattern bank, step grid.
     auto c = content;
@@ -275,6 +294,12 @@ void PatternView::resized()
     c.removeFromTop (space::gutter);
     patternBarArea = c.removeFromTop (shape::pillHeight);
     c.removeFromTop (space::gutter);
+    if (terminalOpen)
+    {
+        terminalArea = c.removeFromBottom (terminalHeight);
+        c.removeFromBottom (space::gutter);
+        terminal.setBounds (terminalArea.toNearestInt());
+    }
     gridArea = c;
 
     // Pattern bank: 16 squares in groups of 4, the length chip on the right.
@@ -291,6 +316,26 @@ void PatternView::resized()
         renameEditor.setBounds (titleArea.withTrimmedTop (titleArea.getHeight() - 56.0f).toNearestInt());
 
     layoutSteps();
+}
+
+void PatternView::runInTerminal (const juce::StringArray& lines)
+{
+    if (! terminalOpen)
+        toggleTerminal();
+    for (const auto& line : lines)
+        terminal.runLine (line);
+}
+
+void PatternView::toggleTerminal()
+{
+    terminalOpen = ! terminalOpen;
+    terminal.setVisible (terminalOpen);
+    resized();
+    if (terminalOpen)
+        terminal.focusInput();
+    else
+        grabKeyboardFocus();
+    repaint();
 }
 
 void PatternView::layoutSteps()
@@ -387,7 +432,7 @@ void PatternView::paintLeftColumn (juce::Graphics& g) const
 
     auto keys = keysArea;
     drawText (g, "Keys", type::sectionTitle, ink, keys.removeFromTop (28.0f));
-    const std::array<std::pair<const char*, const char*>, 8> hints { {
+    const std::array<std::pair<const char*, const char*>, 9> hints { {
         { "Space", "play / stop" },
         { "Click", "step on / off" },
         { "Shift Ctrl Alt", "accent, slide, tie" },
@@ -396,6 +441,7 @@ void PatternView::paintLeftColumn (juce::Graphics& g) const
         { "Ctrl+Z / Y", "undo / redo" },
         { "Ctrl+S / O", "save / open" },
         { "T", "theme" },
+        { "`", "terminal" },
     } };
     for (const auto& [key, what] : hints)
     {
@@ -619,13 +665,13 @@ void PatternView::mouseDown (const juce::MouseEvent& e)
 
     const auto step = session.selectedPattern().getStep (index);
     if (e.mods.isShiftDown())
-        run ("pattern.step.accent", { { "step", index }, { "on", ! (step.on && step.accent) } });
+        run ("pattern.step.accent", { { "step", index + 1 }, { "on", ! (step.on && step.accent) } });
     else if (e.mods.isCtrlDown())
-        run ("pattern.step.slide", { { "step", index }, { "on", ! (step.on && step.slide) } });
+        run ("pattern.step.slide", { { "step", index + 1 }, { "on", ! (step.on && step.slide) } });
     else if (e.mods.isAltDown())
-        run ("pattern.step.tie", { { "step", index }, { "on", ! (step.on && step.tie) } });
+        run ("pattern.step.tie", { { "step", index + 1 }, { "on", ! (step.on && step.tie) } });
     else
-        run ("pattern.step.toggle", { { "step", index } });
+        run ("pattern.step.toggle", { { "step", index + 1 } });
     timerCallback(); // show the edit now, not on the next tick
 }
 
@@ -666,7 +712,7 @@ void PatternView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
     const auto interval = e.mods.isShiftDown() ? 12 : 1;
     const auto note = session.selectedPattern().getStep (index).note + (wheel.deltaY > 0 ? interval : -interval);
     if (note >= core::Step::minNote && note <= core::Step::maxNote)
-        run ("pattern.step.note", { { "step", index }, { "note", note } });
+        run ("pattern.step.note", { { "step", index + 1 }, { "note", note } });
     timerCallback();
 }
 
@@ -683,7 +729,8 @@ bool PatternView::keyPressed (const juce::KeyPress& key)
         K key;
         std::function<void()> action;
     };
-    const std::array<Binding, 11> bindings { {
+    const std::array<Binding, 12> bindings { {
+        { K ('`'), [this] { toggleTerminal(); } },
         { K (K::spaceKey), [this] { run ("transport.toggle"); } },
         { K ('t'), [this] { run ("ui.theme.toggle"); } },
         { K ('z', cmd, 0), [this] { run ("edit.undo"); } },

@@ -45,12 +45,14 @@ struct AcidParams
     static constexpr float defaultEnvMod = 0.6f;
     static constexpr float defaultDecay = 0.45f;
     static constexpr float defaultAccent = 0.7f;
+    static constexpr float defaultDrive = 0.0f;
 
     std::atomic<float> cutoff { defaultCutoff };
     std::atomic<float> resonance { defaultResonance };
     std::atomic<float> envMod { defaultEnvMod };
     std::atomic<float> decay { defaultDecay };
     std::atomic<float> accent { defaultAccent };
+    std::atomic<float> drive { defaultDrive };
     std::atomic<bool> square { false }; // false = saw
 
     void reset() noexcept;

@@ -116,7 +116,13 @@ CommandOutcome CommandRegistry::execute (const juce::String& id, const CommandAr
 
     if (outcome.succeeded() && outcome.undo != nullptr)
     {
-        pushUndo ({ id, args, outcome.undo });
+        const auto gesture = gestureOpen ? gestureCounter : 0;
+        const auto mergeWithLast = definition->coalesce && gesture != 0 && ! undoStack.empty() &&
+                                   undoStack.back().id == id && undoStack.back().gesture == gesture;
+        if (mergeWithLast)
+            undoStack.back().args = args; // keep the first undo (the value before the gesture); redo goes to the latest
+        else
+            pushUndo ({ id, args, outcome.undo, gesture });
         redoStack.clear(); // a new action makes the old future unreachable
     }
     if (outcome.succeeded())

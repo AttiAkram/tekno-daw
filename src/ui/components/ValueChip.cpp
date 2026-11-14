@@ -68,6 +68,8 @@ void ValueChip::mouseDown (const juce::MouseEvent&)
 {
     dragStartValue = value;
     dragging = true;
+    if (onDragStart)
+        onDragStart();
     repaint();
 }
 
@@ -81,6 +83,8 @@ void ValueChip::mouseDrag (const juce::MouseEvent& e)
 void ValueChip::mouseUp (const juce::MouseEvent&)
 {
     dragging = false;
+    if (onDragEnd)
+        onDragEnd();
     repaint();
 }
 

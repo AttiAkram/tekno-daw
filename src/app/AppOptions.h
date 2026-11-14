@@ -27,6 +27,7 @@ struct AppOptions
     int bars = 4;                                       // --bars=<1..64>     length of --render
     bool noAudio = false;                               // --no-audio         don't open an audio device
     juce::File project;                                 // <file.tekno>       open this project at start
+    juce::StringArray run;                              // --run="a; b"       terminal commands to run at start
     ui::tokens::Theme theme = ui::tokens::defaultTheme; // --theme=dark|light
     juce::StringArray errors;                           // unknown or malformed arguments
 

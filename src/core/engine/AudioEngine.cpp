@@ -34,8 +34,8 @@ dsp::AcidVoice::Controls AudioEngine::readControls() const noexcept
 {
     const auto& p = session.synth;
     constexpr auto relaxed = std::memory_order_relaxed;
-    return { p.cutoff.load (relaxed), p.resonance.load (relaxed), p.envMod.load (relaxed),
-             p.decay.load (relaxed),  p.accent.load (relaxed),    p.square.load (relaxed) };
+    return { p.cutoff.load (relaxed), p.resonance.load (relaxed), p.envMod.load (relaxed), p.decay.load (relaxed),
+             p.accent.load (relaxed), p.square.load (relaxed),    p.drive.load (relaxed) };
 }
 
 void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples) noexcept

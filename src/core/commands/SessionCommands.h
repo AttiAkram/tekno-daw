@@ -16,8 +16,8 @@ namespace tekno::core
 /** Registers every command that acts on a Session: transport, patterns, synth, project files and
     undo/redo. Pattern commands act on the selected pattern.
 
-    Undoable: pattern edits. Not undoable (yet): transport, tempo, swing and synth knobs, because a
-    knob drag produces dozens of changes and history merging does not exist yet.
+    Undoable: everything saved in the project. Knobs, tempo and swing coalesce: a whole drag between
+    beginGesture()/endGesture() is one undo step. Not undoable: play/stop, pattern selection.
 
     Project commands never ask questions (unsaved changes, overwrite): asking is the job of the
     caller (the UI today, a terminal or remote client tomorrow). */

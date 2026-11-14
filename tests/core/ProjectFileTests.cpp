@@ -145,7 +145,7 @@ TEST_CASE ("project commands save, mark changes and open", "[core][project][comm
 
     CHECK (r.execute ("project.save").error.contains ("saveAs"));
     CHECK_FALSE (s.project.hasUnsavedChanges());
-    r.execute ("pattern.step.toggle", { { "step", 1 } });
+    r.execute ("pattern.step.toggle", { { "step", 2 } });
     CHECK (s.project.hasUnsavedChanges());
     r.execute ("transport.play"); // playing is not a change to the project
     REQUIRE (r.execute ("project.saveAs", { { "path", file.getFullPathName() } }).succeeded());

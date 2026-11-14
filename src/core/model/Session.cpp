@@ -17,6 +17,7 @@ void AcidParams::reset() noexcept
     envMod = defaultEnvMod;
     decay = defaultDecay;
     accent = defaultAccent;
+    drive = defaultDrive;
     square = false;
 }
 

@@ -3,9 +3,9 @@
 An open source, pattern-based DAW for **acid / mental tekno** — built in the spirit of
 FL Studio's workflow, with a 303-style acid synth wired in from day one.
 
-> **Status: pre-alpha.** The built-in acid synth plays on your sound card: 16 patterns of 1 to 64
-> steps with accent, slide and tie, swing, pattern changes on the bar, undo, and projects saved as
-> readable `.tekno` files. See the roadmap below.
+> **Status: pre-alpha.** The built-in acid synth plays on your sound card, with an antialiased drive:
+> 16 patterns of 1 to 64 steps with accent, slide and tie, swing, pattern changes on the bar, undo of
+> every edit, a built-in command terminal, and projects saved as readable `.tekno` files.
 
 ## Goals
 
@@ -26,8 +26,8 @@ and project version history.
 |---|---|
 | ✅ M0 | Foundations: build, tests, CI, visual theme, style preview |
 | ✅ M1 | MVP: an acid synth playing a 16-step pattern |
-| ▶ M2 | Real sequencer: patterns, accent / slide / tie, swing, project files |
-| M3 | Channel rack, mixer, piano roll, drum sampler |
+| ✅ M2 | Real sequencer: patterns, accent / slide / tie, swing, project files, drive, terminal |
+| ▶ M3 | Channel rack, mixer, piano roll, drum sampler |
 | M4 | VST3 hosting (out of process) and MIDI input |
 | M5 | Audio export, full project format, more import formats |
 | M6 | Arrangement and automation |
@@ -58,6 +58,7 @@ after that everything works offline. A full build takes about a minute on a 12-c
 | Ctrl+Z / Ctrl+Y | undo / redo pattern edits |
 | Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+N | save / save as / open / new |
 | T | light / dark theme |
+| ` (backquote) | open / close the terminal |
 
 ### Presets
 
@@ -93,9 +94,26 @@ tekno-daw --snapshot=out.png   render the main window to a PNG and exit
 tekno-daw song.tekno           open a project
 tekno-daw song.tekno --render=out.wav --bars=8   render its selected pattern to a WAV, no sound card needed
 tekno-daw --no-audio           start without opening an audio device
+tekno-daw --run="bpm 138; swing 62"   open the terminal and run commands at start
 tekno-daw --smoke-test         open the window and quit after a second
 tekno-daw --version
 ```
+
+## Terminal
+
+Press `` ` `` to open it. Every action of the DAW is a named command, and the terminal runs them:
+
+```
+bpm 138                 transport.bpm 138, by its short name
+note 3 C#3              set step 3 to C#3
+accent 5 on             accent on step 5
+rename acid night       rename the pattern
+drive 0.6               push the 303 into distortion
+help bpm                what a command takes; help alone lists them all
+```
+
+Tab completes, Up/Down walk the history, and `tekno-daw --run="bpm 138; drive 0.5"` runs commands at
+start.
 
 ## Project files
 

@@ -34,6 +34,8 @@ AppOptions AppOptions::parse (const juce::StringArray& arguments)
             if (options.bars < 1 || options.bars > 64)
                 options.errors.add ("--bars must be between 1 and 64");
         }
+        else if (arg.startsWith ("--run="))
+            options.run.addTokens (arg.fromFirstOccurrenceOf ("=", false, false), ";", "\"");
         else if (arg == "--no-audio")
             options.noAudio = true;
         else if (arg == "--theme=dark")
@@ -57,6 +59,7 @@ juce::String AppOptions::helpText()
            "  --render=<file.wav>  render the pattern to a WAV (no window, no audio device) and exit\n"
            "  --bars=<n>           how many bars --render writes (default 4)\n"
            "  --no-audio           start without opening an audio device\n"
+           "  --run=\"cmd; cmd\"     open the terminal and run these commands at start\n"
            "  --smoke-test         open the window, quit after one second (used by tests)\n"
            "  --version            print the version and exit\n"
            "  --help               show this text\n";

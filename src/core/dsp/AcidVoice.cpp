@@ -30,6 +30,14 @@ namespace
     }
 
     // Removes the aliasing of a hard edge around phase 0 (polynomial band-limited step).
+    // log(cosh(x)), the antiderivative of tanh, written so it can't overflow for large |x|.
+    double logCosh (double x) noexcept
+    {
+        const auto a = std::abs (x);
+        constexpr double ln2 = 0.69314718055994530942;
+        return a + std::log1p (std::exp (-2.0 * a)) - ln2;
+    }
+
     double polyBlep (double t, double dt) noexcept
     {
         if (t < dt)
@@ -75,6 +83,19 @@ void AcidVoice::reset() noexcept
     phase = 0.0;
     gate = sliding = accentedNote = false;
     filterEnv = amp = ampHold = 0.0f;
+    shaperPrevious = 0.0;
+    toneState = 0.0f;
+}
+
+float AcidVoice::shape (double input) noexcept
+{
+    // ADAA1: the average of tanh between the previous and the current input, instead of tanh at a
+    // single point. Most of the aliasing a hard waveshaper creates simply never happens.
+    const auto delta = input - shaperPrevious;
+    const auto out = std::abs (delta) < 1.0e-5 ? std::tanh (0.5 * (input + shaperPrevious))
+                                               : (logCosh (input) - logCosh (shaperPrevious)) / delta;
+    shaperPrevious = input;
+    return static_cast<float> (out);
 }
 
 void AcidVoice::noteOn (int midiNote, bool accented) noexcept
@@ -107,6 +128,7 @@ float AcidVoice::process() noexcept
     smoothed.resonance += (target.resonance - smoothed.resonance) * smoothing;
     smoothed.envMod += (target.envMod - smoothed.envMod) * smoothing;
     smoothed.accent += (target.accent - smoothed.accent) * smoothing;
+    smoothed.drive += (target.drive - smoothed.drive) * smoothing;
 
     // Pitch, with slide.
     if (sliding)
@@ -144,6 +166,21 @@ float AcidVoice::process() noexcept
     amp += (ampTarget - amp) * (gate ? attack : release);
 
     const auto gain = 0.45f * (1.0f + accentAmount * 0.9f);
-    return std::tanh (y * amp * gain); // soft ceiling: never above 1.0
+
+    // Drive: up to ~31x into the shaper (quadratic taper: the first half of the knob stays musical),
+    // level brought back down so turning it up doesn't just make it louder. Accents hit it harder.
+    const auto drive = smoothed.drive;
+    const auto preGain = 1.0f + 30.0f * drive * drive;
+    const auto shaped = shape (static_cast<double> (y * amp * gain * preGain));
+
+    // Tone: one-pole lowpass from ~16 kHz (clean) down to ~5 kHz (full drive).
+    const auto toneHz = 16000.0f - 11000.0f * drive;
+    const auto toneCoeff =
+        1.0f - std::exp (-juce::MathConstants<float>::twoPi * toneHz / static_cast<float> (sampleRate));
+    toneState += (shaped - toneState) * toneCoeff;
+
+    // Fitted on measurements (DriveTests): saturation adds level fast, then flattens out.
+    const auto makeup = 1.0f / (1.0f + 2.8f * (1.0f - std::exp (-4.0f * drive)));
+    return toneState * makeup; // |shaped| <= 1, so the output never exceeds 1.0
 }
 } // namespace tekno::core::dsp

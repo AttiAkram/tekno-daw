@@ -5,6 +5,7 @@ add_library(tekno_ui STATIC
     theme/Fonts.cpp
     theme/TeknoLookAndFeel.cpp
     components/IconButton.cpp
+    components/Terminal.cpp
     components/ValueChip.cpp
     views/PatternView.cpp
     ProjectActions.cpp)

@@ -28,6 +28,7 @@ public:
     bool isBeingDragged() const noexcept { return dragging; }
 
     std::function<void (double)> onChange;
+    std::function<void()> onDragStart, onDragEnd; // a drag is one gesture (one undo step)
 
     void paint (juce::Graphics&) override;
     void mouseEnter (const juce::MouseEvent&) override { repaint(); }
