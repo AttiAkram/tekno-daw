@@ -19,6 +19,7 @@
 #include "core/model/Channel.h"
 #include "core/model/Pattern.h"
 #include "core/model/SampleLibrary.h"
+#include "core/model/Scale.h"
 
 namespace tekno::core
 {
@@ -70,6 +71,7 @@ struct ProjectInfo
     std::array<juce::String, 16> channelNames;
     std::array<juce::String, 16> channelSamples; // origin of each channel's sample, kept even if missing
     juce::StringArray warnings;                  // from the last open: missing samples and the like
+    Key key;                                     // the scale guide; off until chosen
 
     bool hasUnsavedChanges() const noexcept { return revision != savedRevision; }
 };
@@ -141,6 +143,12 @@ public:
     /** Counted by the audio thread at the end of every render(): tells the message thread when an
         old sample can no longer be in use. */
     std::atomic<std::uint64_t> audioBlocks { 0 };
+
+    /** Audition: "play this note on this channel now", from the message thread (placing a note,
+        clicking a key). Only the latest request counts; the engine plays it for a moment.
+        Layout: request number << 32 | channel << 16 | velocity << 8 | pitch. 0 = none yet. */
+    std::atomic<std::uint64_t> preview { 0 };
+    void requestPreview (int channel, int pitch, int velocity) noexcept;
 
     ProjectInfo project;   // message thread only
     SampleLibrary samples; // message thread only

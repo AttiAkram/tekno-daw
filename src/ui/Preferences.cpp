@@ -77,6 +77,26 @@ void Preferences::setSnap (const juce::String& name)
     properties->setValue ("snap", name);
 }
 
+bool Preferences::scaleLock() const
+{
+    return properties->getBoolValue ("scaleLock", true);
+}
+
+void Preferences::setScaleLock (bool on)
+{
+    properties->setValue ("scaleLock", on);
+}
+
+bool Preferences::preview() const
+{
+    return properties->getBoolValue ("preview", true);
+}
+
+void Preferences::setPreview (bool on)
+{
+    properties->setValue ("preview", on);
+}
+
 tokens::Theme Preferences::theme() const
 {
     const auto value = properties->getValue ("theme", {});

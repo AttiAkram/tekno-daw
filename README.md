@@ -135,6 +135,8 @@ toggle 5 channel=2      edit another channel without selecting it
 channel.add sampler name=snare
 sample builtin:clap     load a built-in sound, or a WAV / AIFF / FLAC / Ogg file
 note.add 344 E3 16      a note at tick 344 (24 per step), a 1/16 triplet long
+key La minore           the scale guide: any root, major/minor/phrygian/dorian/harmonic/pentatonic
+hear La3                play a note on the selected channel, just to hear it
 tune -2                 tune the selected sampler down two semitones
 vol -6 channel=1        mixer: volume in dB, also pan, mute, solo, mixer.master
 help bpm                what a command takes; help alone lists them all
@@ -145,7 +147,14 @@ them. Click to add a note, drag to move it, drag its right edge to change its le
 delete it, Shift+click for accent, Ctrl+click for slide. Hold and drag on empty space to select several
 notes (Shift adds to the selection), drag one of them to move them all, Delete removes them, Ctrl+A
 selects everything. The lane at the bottom shows each note's **velocity** (0-127, 100 = as it is):
-drag a bar up or down, and with several notes selected it sets them all. Notes snap to the step, to 1/32, to 1/16
+drag a bar up or down, and with several notes selected it sets them all. Hover a bar or a note to see
+which is which, with its name and value. Ctrl+wheel zooms the rows.
+
+**Scale guide.** Pick the project's key with the key button in the piano roll (or `key La minore`,
+`key E phrygian`, `key off`): notes outside the scale get darker rows and a warning dot, the root is
+marked, and new or moved notes land on the scale (`ui.scalelock off` to place anything). A new project
+starts in A minor, the key of its line. Notes play as you place or move them, and clicking a key on the
+keyboard plays it (`ui.preview off` for silence). Notes snap to the step, to 1/32, to 1/16
 triplets, or nowhere (`ui.snap step|1/32|1/3|free`). The step sequencer and the piano roll edit the same
 notes; a row whose notes are off the grid shows them in miniature, and a click opens the piano roll.
 

@@ -78,6 +78,7 @@ public:
     };
     void showView (View view);
     void setSnap (PianoRollView::Snap snap);
+    PianoRollView& getPianoRoll() noexcept { return pianoRoll; }
     View currentView() const noexcept { return view; }
     static std::optional<View> viewFromName (const juce::String& name);
 
@@ -196,6 +197,8 @@ private:
     MixerView mixer;
     PianoRollView pianoRoll;
     std::array<juce::TextButton, 4> snapButtons;
+    juce::TextButton keyButton; // the project's key: opens a menu of roots and scales
+    void showKeyMenu();
     View view = View::pattern;
     int renamingChannel = -1; // which name the rename editor is changing; -1 = the pattern's
     int dropChannel = -1;     // where a dragged file would go; -1 = no file over the window

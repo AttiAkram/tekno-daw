@@ -72,6 +72,7 @@ void AudioEngine::prepare (double newSampleRate) noexcept
         p.acidGain = p.acidGainTarget = 1.0f;
     }
     velocityGlide = static_cast<float> (1.0 - std::exp (-1.0 / (0.002 * sampleRate)));
+    lastPreview = session.preview.load() >> 32; // an old request is not played again
     wasPlaying = false;
     step = -1;
     stepCounter = 0;
@@ -157,6 +158,8 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
     }
     wasPlaying = playing;
 
+    startPreview (channels);
+
     float masterPeakLeft = 0.0f, masterPeakRight = 0.0f;
     const auto rampStep = 1.0f / static_cast<float> (std::max (1, numSamples));
 
@@ -188,6 +191,13 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
                 }
             }
             samplesIntoStep += 1.0;
+        }
+
+        for (int c = 0; c < channels; ++c) // auditioned acid notes are short
+        {
+            auto& p = players[static_cast<size_t> (c)];
+            if (p.previewSamplesLeft > 0 && --p.previewSamplesLeft == 0)
+                p.acid.gateOff();
         }
 
         const auto ramp = static_cast<float> (i + 1) * rampStep;
@@ -242,6 +252,30 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
     raisePeak (session.master.peakRight, masterPeakRight);
 
     session.audioBlocks.fetch_add (1, std::memory_order_release);
+}
+
+void AudioEngine::startPreview (int channels) noexcept
+{
+    const auto request = session.preview.load (std::memory_order_acquire);
+    if ((request >> 32) == lastPreview)
+        return;
+    lastPreview = request >> 32;
+
+    const auto channel = static_cast<int> ((request >> 16) & 0xffu);
+    const auto velocity = static_cast<int> ((request >> 8) & 0xffu);
+    const auto pitch = static_cast<int> (request & 0xffu);
+    if (channel >= channels)
+        return;
+
+    auto& player = players[static_cast<size_t> (channel)];
+    if (player.kind == InstrumentKind::sampler)
+    {
+        player.sampler.trigger (pitch, false, Note::velocityGain (velocity));
+        return;
+    }
+    player.acid.noteOn (pitch, false);
+    player.acidGainTarget = Note::velocityGain (velocity);
+    player.previewSamplesLeft = static_cast<int> (sampleRate * 0.25); // a quarter of a second
 }
 
 void AudioEngine::startStep (int index, double straightLength, int channels) noexcept
@@ -316,6 +350,7 @@ void AudioEngine::play (ChannelPlayer& player, int channel, const Note& note) no
     }
 
     auto& voice = player.acid;
+    player.previewSamplesLeft = 0; // the sequencer takes over from an audition
     const auto gateOpen = ! firstStep && voice.isGateOn();
     if (gateOpen && player.hasLastNote && player.lastNote.slide)
         voice.glideTo (note.pitch); // no retrigger: the slide is one continuous gesture

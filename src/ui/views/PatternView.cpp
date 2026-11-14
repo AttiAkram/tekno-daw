@@ -213,6 +213,9 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
         addChildComponent (button);
     }
     snapButtons[0].setToggleState (true, juce::dontSendNotification);
+    keyButton.setMouseClickGrabsKeyboardFocus (false);
+    keyButton.onClick = [this] { showKeyMenu(); };
+    addChildComponent (keyButton);
 
     addChildComponent (mixer);
     meters.onChange = [this]
@@ -373,6 +376,9 @@ void PatternView::timerCallback()
     if (! lengthChip.isBeingDragged())
         lengthChip.setValue (now.length);
     playButton.setButtonText (now.playing ? "stop" : "play");
+    if (const auto keyText = session.project.key.active() ? session.project.key.describe() : juce::String ("no key");
+        keyButton.getButtonText() != keyText)
+        keyButton.setButtonText (keyText);
     waveButton.setButtonText (now.square ? "square" : "saw");
 
     if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
@@ -501,8 +507,12 @@ void PatternView::resized()
     pianoRoll.setVisible (view == View::pianoRoll);
     lengthChip.setVisible (view != View::mixer);
 
-    // Snap choices, left of the length chip, only where they matter.
+    // Snap choices and the key, left of the length chip, only where they matter.
     auto snapArea = patternBarArea.withRight (lengthChip.getX() - space::gap);
+    keyButton.setBounds (
+        snapArea.removeFromRight (150.0f).withSizeKeepingCentre (150.0f, shape::pillHeight).toNearestInt());
+    keyButton.setVisible (view == View::pianoRoll);
+    snapArea.removeFromRight (space::gap);
     for (auto it = snapButtons.rbegin(); it != snapButtons.rend(); ++it)
     {
         it->setBounds (snapArea.removeFromRight (56.0f).toNearestInt());
@@ -511,6 +521,47 @@ void PatternView::resized()
 
     layoutKnobs();
     layoutRack();
+}
+
+void PatternView::showKeyMenu()
+{
+    // Roots in the user's naming; scales by what they sound like. Choosing runs key.set.
+    const auto current = session.project.key;
+    const auto latin = core::getNoteNaming() == core::NoteNaming::latin;
+    using core::Scale;
+    const std::array<std::pair<Scale, const char*>, 6> scales { {
+        { Scale::minor, "minor" },
+        { Scale::phrygian, "phrygian" },
+        { Scale::dorian, "dorian" },
+        { Scale::harmonic, "harmonic" },
+        { Scale::pentatonic, "pentatonic" },
+        { Scale::major, "major" },
+    } };
+
+    juce::PopupMenu menu;
+    for (int root = 0; root < 12; ++root)
+    {
+        juce::PopupMenu sub;
+        for (const auto& [scale, name] : scales)
+        {
+            const core::Key key { root, scale };
+            sub.addItem (
+                key.describe(), true, current == key, [this, key]
+                { run ("key.set", { { "key", core::rootName (key.root) + " " + core::scaleName (key.scale) } }); });
+        }
+        menu.addSubMenu (core::rootName (root), sub, true, nullptr, current.active() && current.root == root);
+    }
+    menu.addSeparator();
+    menu.addItem (latin ? "Nessuna tonalità (guida spenta)" : "No key (guide off)", true, ! current.active(),
+                  [this] { run ("key.set", { { "key", "off" } }); });
+    menu.addSeparator();
+    const auto locked = pianoRoll.getScaleLock();
+    menu.addItem (latin ? "Blocca le note sulla scala" : "Keep new notes on the scale", true, locked,
+                  [this, locked] { run ("ui.scalelock", { { "on", ! locked } }); });
+    const auto hearing = pianoRoll.getPreview();
+    menu.addItem (latin ? "Ascolta le note mentre le metti" : "Hear notes as you place them", true, hearing,
+                  [this, hearing] { run ("ui.preview", { { "on", ! hearing } }); });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (keyButton));
 }
 
 void PatternView::setSnap (PianoRollView::Snap snap)

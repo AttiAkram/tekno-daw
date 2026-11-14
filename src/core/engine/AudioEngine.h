@@ -100,8 +100,9 @@ private:
         std::int64_t releaseStep = 0;
         double releaseFraction = 0.0;
 
-        float gainLeft = 0.0f, gainRight = 0.0f; // gains reached at the end of the last block
+        float gainLeft = 0.0f, gainRight = 0.0f;      // gains reached at the end of the last block
         float acidGain = 1.0f, acidGainTarget = 1.0f; // the acid note's velocity, glided to avoid clicks
+        int previewSamplesLeft = 0;                   // an auditioned acid note closes its gate when this reaches 0
 
         void resetPlayback() noexcept
         {
@@ -128,7 +129,10 @@ private:
     double samplesIntoStep = 0.0;
     double currentStepLength = 0.0;
     float masterGain = 1.0f;
-    float velocityGlide = 1.0f; // per-sample step of the acid velocity glide (about 2 ms)
+    float velocityGlide = 1.0f;    // per-sample step of the acid velocity glide (about 2 ms)
+    std::uint64_t lastPreview = 0; // number of the last audition request played
+
+    void startPreview (int channels) noexcept;
 
     JUCE_DECLARE_NON_COPYABLE (AudioEngine)
 };

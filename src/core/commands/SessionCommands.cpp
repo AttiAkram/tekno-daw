@@ -642,6 +642,48 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
         true);
 
     add (
+        registry, "note.preview", "Play a note for a moment on a channel, to hear it (changes nothing)",
+        { pitchParam, { "velocity", Type::integer, 0, 127, "loudness 0-127 (default 100)", true }, channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            const auto target = channelArg (session, args);
+            if (target.index < 0)
+                return CommandOutcome::fail (target.error);
+            session.requestPreview (target.index, args["note"],
+                                    args.contains ("velocity") ? static_cast<int> (args["velocity"])
+                                                               : Note::defaultVelocity);
+            return CommandOutcome::ok();
+        },
+        false);
+    add (
+        registry, "key.set", "Choose the project's key for the scale guide: \"La minore\", \"A phrygian\", or off",
+        { { "key", Type::text, 0, 0,
+            "root and scale (major, minor, phrygian, dorian, harmonic, pentatonic), or off" } },
+        [&session] (const CommandArgs& args)
+        {
+            auto words = juce::StringArray::fromTokens (args["key"].toString(), " ", "");
+            words.removeEmptyStrings();
+            Key key;
+            if (words.isEmpty() || words[0].equalsIgnoreCase ("off"))
+                key.scale = Scale::none;
+            else
+            {
+                const auto root = parseRoot (words[0]);
+                const auto scale = parseScale (words.size() > 1 ? words[1] : juce::String ("minor"));
+                if (! root)
+                    return CommandOutcome::fail ("'" + words[0] + "' is not a note: try La, A, Do#, F#");
+                if (! scale)
+                    return CommandOutcome::fail (
+                        "'" + words[1] + "' is not a scale: major, minor, phrygian, dorian, harmonic, pentatonic");
+                key = { *root, *scale };
+            }
+            const auto before = session.project.key;
+            session.project.key = key;
+            return CommandOutcome::ok ([&session, before] { session.project.key = before; });
+        },
+        true);
+
+    add (
         registry, "midi.import", "Put a melody from a MIDI file (.mid) into a lane, replacing its notes",
         { { "path", Type::text, 0, 0, "path of a .mid file" },
           { "track", Type::integer, 1, 128, "which track (default: the first with notes)", true },

@@ -40,8 +40,7 @@ std::uint64_t Note::pack() const noexcept
     const auto l = static_cast<std::uint64_t> (std::clamp (length, 1, maxTicks));
     const auto p = static_cast<std::uint64_t> (std::clamp (pitch, 0, 127));
     const auto v = static_cast<std::uint64_t> (std::clamp (velocity, 0, 127));
-    return s | (l << 16) | (p << 32) | (accent ? 1ull << 39 : 0) | (slide ? 1ull << 40 : 0) | (v << 41) |
-           (1ull << 63);
+    return s | (l << 16) | (p << 32) | (accent ? 1ull << 39 : 0) | (slide ? 1ull << 40 : 0) | (v << 41) | (1ull << 63);
 }
 
 Note Note::unpack (std::uint64_t bits) noexcept
@@ -166,7 +165,8 @@ namespace steps
                 continue;
             const auto first = n.start / tps;
             const auto stepsLong = n.length / tps;
-            out[static_cast<size_t> (first)] = Step { true, n.accent, stepsLong == 1 && n.slide, n.pitch, false, n.velocity };
+            out[static_cast<size_t> (first)] =
+                Step { true, n.accent, stepsLong == 1 && n.slide, n.pitch, false, n.velocity };
 
             for (int j = 1; j < stepsLong; ++j)
             {

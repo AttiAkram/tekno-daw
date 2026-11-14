@@ -36,6 +36,11 @@ public:
     juce::String snap() const; // a PianoRollView snap name, "step" by default
     void setSnap (const juce::String& name);
 
+    bool scaleLock() const; // new notes land on the key's scale (on by default)
+    void setScaleLock (bool on);
+    bool preview() const; // hear notes as they are placed (on by default)
+    void setPreview (bool on);
+
     tokens::Theme theme() const;
     void setTheme (tokens::Theme theme);
 

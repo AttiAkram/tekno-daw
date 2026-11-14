@@ -92,6 +92,7 @@ namespace
         double bpm = TransportState::defaultBpm;
         float swing = TransportState::minSwing;
         float masterDb = 0.0f;
+        Key key;
         int selected = 0;
         int selectedChannel = 0;
         std::vector<ChannelData> channels; // lanes included
@@ -419,6 +420,20 @@ namespace
         data.selected =
             static_cast<int> (r.number (root, "selectedPattern", "project", 1, 1, Session::maxPatterns)) - 1;
 
+        if (const auto key = root["key"]; ! key.isVoid())
+        {
+            const auto rootText = r.text (key, "root", "key", "A");
+            const auto scaleText = r.text (key, "scale", "key", "off");
+            const auto parsedRoot = parseRoot (rootText);
+            const auto parsedScale = parseScale (scaleText);
+            if (! parsedRoot)
+                r.fail ("key.root", "'" + rootText + "' is not a note name");
+            else if (! parsedScale)
+                r.fail ("key.scale", "'" + scaleText + "' is not a scale this version knows");
+            else
+                data.key = { *parsedRoot, *parsedScale };
+        }
+
         if (version <= 1)
             parseVersion1 (r, root, data);
         else
@@ -462,6 +477,7 @@ namespace
         session.selected = data.selected;
         session.playing = data.selected;
         session.selectedChannel = std::clamp (data.selectedChannel, 0, session.channelCount() - 1);
+        session.project.key = data.key;
         session.project.warnings = warnings;
     }
 } // namespace
@@ -476,6 +492,9 @@ juce::String toText (const Session& session, const juce::File& projectFolder)
     lines.add ("  \"tempo\": { \"bpm\": " + number (session.transport.bpm.load()) +
                ", \"swing\": " + number (session.transport.swing.load()) + " },");
     lines.add ("  \"master\": { \"volume\": " + number (session.master.volumeDb.load()) + " },");
+    if (session.project.key.active())
+        lines.add ("  \"key\": { \"root\": " + quoted (rootName (session.project.key.root, true)) +
+                   ", \"scale\": " + quoted (scaleName (session.project.key.scale)) + " },");
     lines.add ("  \"selectedPattern\": " + juce::String (session.selected.load() + 1) + ",");
     lines.add ("  \"selectedChannel\": " + juce::String (session.selectedChannel.load() + 1) + ",");
 

@@ -47,12 +47,20 @@ public:
     void setSnap (Snap snap);
     Snap getSnap() const noexcept { return snap; }
 
+    /** With a key chosen, new and moved notes land on the nearest note of the scale. */
+    void setScaleLock (bool on);
+    /** Hear a note when it is placed, moved to another pitch, or its key is clicked. */
+    void setPreview (bool on) { preview = on; }
+    bool getScaleLock() const noexcept { return scaleLock; }
+    bool getPreview() const noexcept { return preview; }
+
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed (const juce::KeyPress&) override;
 
@@ -68,6 +76,7 @@ private:
         int pattern = 0, channel = 0, length = 0, currentStep = -1;
         bool playing = false;
         std::vector<core::Note> notes, ghosts;
+        core::Key key;
 
         bool operator== (const Snapshot&) const = default;
     };
@@ -101,6 +110,9 @@ private:
     int velocityBarAt (juce::Point<float> position) const noexcept; // index into shown.notes, or -1
     int velocityFromY (float y) const noexcept;
     void addNoteAt (juce::Point<float> position);
+    float velocityBarX (size_t index) const noexcept; // notes starting together get bars side by side
+    void hear (int pitch, int velocity);
+    int lockedPitch (int pitch) const noexcept; // onto the scale when the lock is on
 
     TeknoLookAndFeel& lnf;
     core::Session& session;
@@ -110,6 +122,10 @@ private:
     Snap snap = Snap::step;
     int newNoteLength = core::Note::ticksPerStep;
     float scrollY = 0.0f;
+    float rowHeight = 18.0f; // Ctrl+wheel zooms
+    bool scaleLock = true;
+    bool preview = true;
+    int hoveredNote = -1; // index into shown.notes, under the mouse in the grid or the velocity lane
     int scrolledFor = -1; // pattern * 16 + channel the view last scrolled to
 
     Drag drag = Drag::none;

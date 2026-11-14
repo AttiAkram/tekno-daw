@@ -105,6 +105,8 @@ public:
         mainWindow = std::make_unique<MainWindow> (getApplicationName(), *lookAndFeel, std::move (view));
         if (const auto snap = ui::PianoRollView::snapFromName (preferences->snap()))
             mainView->setSnap (*snap);
+        mainView->getPianoRoll().setScaleLock (preferences->scaleLock());
+        mainView->getPianoRoll().setPreview (preferences->preview());
 
         if (options.view.isNotEmpty())
             if (const auto outcome = commands.execute ("ui.view", { { "view", options.view } }); ! outcome.succeeded())
@@ -219,6 +221,30 @@ private:
                             preferences->setSnap (ui::PianoRollView::snapName (*snap));
                             return core::CommandOutcome::ok();
                         } });
+        auto addToggle = [this] (const char* id, const char* description,
+                                 std::function<void (ui::PianoRollView&, bool)> apply,
+                                 std::function<void (ui::Preferences&, bool)> save)
+        {
+            commands.add ({ id,
+                            description,
+                            { { "on", core::CommandParam::Type::boolean, 0, 1, "on or off" } },
+                            [this, apply, save] (const core::CommandArgs& args)
+                            {
+                                const bool on = args["on"];
+                                if (mainView != nullptr)
+                                    apply (mainView->getPianoRoll(), on);
+                                save (*preferences, on);
+                                return core::CommandOutcome::ok();
+                            } });
+        };
+        addToggle (
+            "ui.scalelock", "With a key chosen, put new and moved notes on the scale",
+            [] (ui::PianoRollView& roll, bool on) { roll.setScaleLock (on); },
+            [] (ui::Preferences& prefs, bool on) { prefs.setScaleLock (on); });
+        addToggle (
+            "ui.preview", "Hear notes as they are placed or moved in the piano roll",
+            [] (ui::PianoRollView& roll, bool on) { roll.setPreview (on); },
+            [] (ui::Preferences& prefs, bool on) { prefs.setPreview (on); });
         commands.add ({ "ui.notes",
                         "Name notes with letters (C D E) or as in Italy (Do Re Mi). Same octaves: C4 = Do4",
                         { { "names", core::CommandParam::Type::text, 0, 0, "letters or latin (abc, doremi)" } },

@@ -23,10 +23,11 @@ namespace
     using core::Note;
 
     constexpr float keyboardWidth = 52.0f;
-    constexpr float rowHeight = 14.0f;
+    constexpr float minRowHeight = 10.0f, maxRowHeight = 36.0f;
+    constexpr float velocityBarWidth = 4.0f, velocityBarSpacing = 9.0f, velocityCap = 9.0f;
     constexpr float edgeGrab = 6.0f; // how close to a note's right edge a drag resizes it
-    constexpr float velocityLaneHeight = 72.0f;
-    constexpr float velocityGrab = 8.0f;  // how close to a velocity bar a click takes it
+    constexpr float velocityLaneHeight = 120.0f;
+    constexpr float velocityGrab = 5.0f;  // how close to a velocity bar a click takes it
     constexpr float dragThreshold = 4.0f; // less than this is a click, not a drag
     constexpr int rows = PianoRollView::highestNote - PianoRollView::lowestNote + 1;
 
@@ -119,6 +120,7 @@ PianoRollView::Snapshot PianoRollView::takeSnapshot() const
     s.channel = std::clamp (session.selectedChannel.load(), 0, std::max (0, session.channelCount() - 1));
     const auto& pattern = session.pattern (s.pattern);
     s.length = pattern.getLength();
+    s.key = session.project.key;
     s.playing = session.transport.playing.load();
     s.currentStep = s.playing && session.playing.load() == s.pattern ? session.transport.currentStep.load() : -1;
     for (int c = 0; c < session.channelCount(); ++c)
@@ -179,7 +181,8 @@ void PianoRollView::scrollToNotesIfNew()
 void PianoRollView::resized()
 {
     auto area = getLocalBounds().toFloat();
-    velocityLane = area.removeFromBottom (velocityLaneHeight);
+    // The velocity lane: tall enough to draw in, never more than 30% of the view.
+    velocityLane = area.removeFromBottom (std::min (velocityLaneHeight, area.getHeight() * 0.3f));
     velocityLabel = velocityLane.removeFromLeft (keyboardWidth);
     keyboard = area.removeFromLeft (keyboardWidth);
     grid = area;
@@ -256,6 +259,38 @@ bool PianoRollView::isSelected (const Note& note) const noexcept
     return std::find (selection.begin(), selection.end(), std::pair { note.start, note.pitch }) != selection.end();
 }
 
+void PianoRollView::setScaleLock (bool on)
+{
+    scaleLock = on;
+}
+
+int PianoRollView::lockedPitch (int pitch) const noexcept
+{
+    pitch = std::clamp (pitch, lowestNote, highestNote);
+    if (! scaleLock || ! shown.key.active())
+        return pitch;
+    const auto locked = shown.key.nearestInScale (pitch);
+    return locked >= lowestNote && locked <= highestNote ? locked : pitch;
+}
+
+void PianoRollView::hear (int pitch, int velocity)
+{
+    if (preview && session.channelCount() > 0)
+        commands.execute ("note.preview",
+                          { { "note", pitch }, { "velocity", velocity }, { "channel", shown.channel + 1 } });
+}
+
+float PianoRollView::velocityBarX (size_t index) const noexcept
+{
+    // Notes that start together (a chord, two stacked notes) get bars side by side, lowest on the left.
+    const auto& note = shown.notes[index];
+    auto rank = 0;
+    for (const auto& other : shown.notes)
+        if (other.start == note.start && (earlier (other, note) || (other.pitch == note.pitch && &other < &note)))
+            ++rank;
+    return tickToX (note.start) + velocityCap * 0.5f + static_cast<float> (rank) * velocityBarSpacing;
+}
+
 juce::String PianoRollView::selectionList() const
 {
     juce::StringArray items;
@@ -278,7 +313,7 @@ int PianoRollView::velocityBarAt (juce::Point<float> position) const noexcept
     auto bestDistance = velocityGrab;
     for (size_t i = 0; i < shown.notes.size(); ++i)
     {
-        const auto distance = std::abs (tickToX (shown.notes[i].start) + 1.5f - position.x);
+        const auto distance = std::abs (velocityBarX (i) - position.x);
         // Selected notes win a tie, so a bar in a crowd can still be reached by selecting it first.
         if (distance < bestDistance || (distance <= bestDistance && isSelected (shown.notes[i])))
         {
@@ -315,16 +350,24 @@ void PianoRollView::paint (juce::Graphics& g)
         const juce::Graphics::ScopedSaveState state (g);
         g.reduceClipRegion (grid.toNearestInt());
 
-        // Rows: black keys darker, a line under every C.
+        // Rows: with a key, notes outside the scale are darker and the root is marked; without one, the
+        // black keys are. A line under every C.
         for (int pitch = lowestNote; pitch <= highestNote; ++pitch)
         {
             const auto y = pitchToY (pitch);
             if (y + rowHeight < grid.getY() || y > grid.getBottom())
                 continue;
-            if (isBlackKey (pitch))
+            const auto row = juce::Rectangle<float> (grid.getX(), y, grid.getWidth(), rowHeight);
+            const auto dark = shown.key.active() ? ! shown.key.contains (pitch) : isBlackKey (pitch);
+            if (dark)
             {
                 g.setColour (lnf.colour (&P::surface));
-                g.fillRect (juce::Rectangle<float> (grid.getX(), y, grid.getWidth(), rowHeight));
+                g.fillRect (row);
+            }
+            if (shown.key.isRoot (pitch))
+            {
+                g.setColour (ink.withAlpha (0.07f));
+                g.fillRect (row);
             }
             if (pitch % 12 == 0)
             {
@@ -363,6 +406,18 @@ void PianoRollView::paint (juce::Graphics& g)
                 g.setColour (lnf.colour (&P::accentOutline));
                 g.drawRoundedRectangle (area, 2.0f, shape::lineWidth);
             }
+            const auto index = static_cast<size_t> (&original - shown.notes.data());
+            if (static_cast<int> (index) == hoveredNote)
+            {
+                g.setColour (ink);
+                g.drawRoundedRectangle (area.expanded (2.0f), 3.0f, 2.0f);
+            }
+            if (! shown.key.contains (note.pitch)) // outside the scale: a warning dot, not a ban
+            {
+                const auto d = std::min (6.0f, area.getHeight() - 4.0f);
+                g.setColour (lnf.colour (&P::warn));
+                g.fillEllipse (area.getRight() - d - 3.0f, area.getCentreY() - d * 0.5f, d, d);
+            }
             if (isSelected (original))
             {
                 g.setColour (bg);
@@ -382,9 +437,9 @@ void PianoRollView::paint (juce::Graphics& g)
                                     pitchToY (next.pitch) + rowHeight * 0.5f, shape::iconStroke);
                         break;
                     }
-            if (area.getWidth() > 30.0f)
+            if (area.getWidth() > 30.0f && rowHeight >= 13.0f)
             {
-                g.setFont (lnf.fonts().font (type::meta).withHeight (10.0f));
+                g.setFont (lnf.fonts().font (type::meta).withHeight (std::min (13.0f, rowHeight - 5.0f)));
                 g.setColour (sounding ? lnf.colour (&P::onAccent) : bg);
                 g.drawText (core::noteName (note.pitch), area.reduced (5.0f, 0.0f), juce::Justification::centredLeft,
                             false);
@@ -421,14 +476,36 @@ void PianoRollView::paint (juce::Graphics& g)
         g.setColour (line.withMultipliedAlpha (0.6f));
         g.fillRect (grid.getX(), unityY, grid.getWidth(), shape::lineWidth);
 
-        for (const auto& original : shown.notes)
+        int labelled = -1; // the bar that gets a "La2 · 100" label: hovered or being dragged
+        for (size_t i = 0; i < shown.notes.size(); ++i)
         {
+            const auto& original = shown.notes[i];
             const auto note = shownAs (original);
-            const auto x = tickToX (note.start) + 1.0f;
+            const auto x = velocityBarX (i);
             const auto y = bottom - (bottom - top) * static_cast<float> (note.velocity) / 127.0f;
-            g.setColour (isSelected (original) || (drag == Drag::velocity && original == dragOriginal) ? ink : muted);
-            g.fillRect (x, y, 3.0f, bottom - y);
-            g.fillEllipse (x - 2.0f, y - 3.5f, 7.0f, 7.0f);
+            const auto active =
+                static_cast<int> (i) == hoveredNote || (drag == Drag::velocity && original == dragOriginal);
+            g.setColour (active || isSelected (original) ? ink : muted);
+            g.fillRect (x - velocityBarWidth * 0.5f, y, velocityBarWidth, bottom - y);
+            g.fillEllipse (x - velocityCap * 0.5f, y - velocityCap * 0.5f, velocityCap, velocityCap);
+            if (active)
+                labelled = static_cast<int> (i);
+        }
+        if (labelled >= 0)
+        {
+            const auto note = shownAs (shown.notes[static_cast<size_t> (labelled)]);
+            const auto x = velocityBarX (static_cast<size_t> (labelled));
+            const auto y = bottom - (bottom - top) * static_cast<float> (note.velocity) / 127.0f;
+            const auto text = core::noteName (note.pitch) + "  " + juce::String (note.velocity);
+            const auto font = lnf.fonts().font (type::meta);
+            const auto width = juce::GlyphArrangement::getStringWidth (font, text) + space::unit * 3.0f;
+            auto box = juce::Rectangle<float> (width, 18.0f).withCentre ({ x, y - 18.0f });
+            box = box.constrainedWithin (velocityLane.withTrimmedLeft (grid.getX() - velocityLane.getX()));
+            g.setColour (ink);
+            g.fillRoundedRectangle (box, 3.0f);
+            g.setFont (font);
+            g.setColour (bg);
+            g.drawText (text, box, juce::Justification::centred, false);
         }
     }
     g.setFont (lnf.fonts().font (type::meta).withHeight (10.0f));
@@ -450,12 +527,19 @@ void PianoRollView::paint (juce::Graphics& g)
                 g.setColour (line);
                 g.fillRect (row.withWidth (keyboard.getWidth() * 0.6f).reduced (0.0f, 1.0f));
             }
+            if (shown.key.isRoot (pitch) && pitch % 12 != 0)
+            {
+                g.setFont (lnf.fonts().font (type::meta).withHeight (std::min (11.0f, rowHeight - 3.0f)));
+                g.setColour (ink);
+                g.drawText (core::noteName (pitch), row.withTrimmedRight (space::unit),
+                            juce::Justification::centredRight, false);
+            }
             if (pitch % 12 == 0)
             {
                 g.setColour (line);
                 g.fillRect (row.getX(), row.getBottom() - shape::lineWidth, row.getWidth(), shape::lineWidth);
-                g.setFont (lnf.fonts().font (type::meta).withHeight (10.0f));
-                g.setColour (muted);
+                g.setFont (lnf.fonts().font (type::meta).withHeight (std::min (11.0f, rowHeight - 3.0f)));
+                g.setColour (shown.key.isRoot (pitch) ? ink : muted);
                 g.drawText (core::noteName (pitch), row.withTrimmedRight (space::unit),
                             juce::Justification::centredRight, false);
             }
@@ -473,12 +557,28 @@ void PianoRollView::paint (juce::Graphics& g)
 void PianoRollView::mouseMove (const juce::MouseEvent& e)
 {
     const auto index = noteAt (e.position);
-    if (velocityBarAt (e.position) >= 0)
+    const auto bar = velocityBarAt (e.position);
+    const auto hovered = bar >= 0 ? bar : (grid.contains (e.position) ? index : -1);
+    if (hovered != hoveredNote)
+    {
+        hoveredNote = hovered;
+        repaint();
+    }
+    if (bar >= 0)
         setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
     else if (index >= 0 && onRightEdge (shown.notes[static_cast<size_t> (index)], e.position))
         setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
     else
         setMouseCursor (juce::MouseCursor::NormalCursor);
+}
+
+void PianoRollView::mouseExit (const juce::MouseEvent&)
+{
+    if (hoveredNote >= 0)
+    {
+        hoveredNote = -1;
+        repaint();
+    }
 }
 
 void PianoRollView::mouseDown (const juce::MouseEvent& e)
@@ -494,6 +594,11 @@ void PianoRollView::mouseDown (const juce::MouseEvent& e)
         dragOriginal = dragNow = shown.notes[static_cast<size_t> (bar)];
         dragNow.velocity = velocityFromY (e.position.y);
         repaint();
+        return;
+    }
+    if (keyboard.contains (e.position)) // a key: just hear it
+    {
+        hear (yToPitch (e.position.y), core::Note::defaultVelocity);
         return;
     }
     if (! grid.contains (e.position))
@@ -565,13 +670,16 @@ void PianoRollView::mouseDrag (const juce::MouseEvent& e)
         // The grabbed note lands on the snap; the others keep their distance from it. Nothing leaves the
         // pattern or the range.
         auto ticks = snapped (dragOriginal.start + deltaTicks) - dragOriginal.start;
-        auto semitones = yToPitch (e.position.y) - yToPitch (dragStart.y);
+        auto semitones =
+            lockedPitch (dragOriginal.pitch + yToPitch (e.position.y) - yToPitch (dragStart.y)) - dragOriginal.pitch;
         for (const auto& [at, pitch] : selection)
         {
             ticks = std::clamp (ticks, -at, lastTick - at);
             semitones = std::clamp (semitones, lowestNote - pitch, highestNote - pitch);
         }
         moveTicks = ticks;
+        if (semitones != moveSemitones)
+            hear (dragOriginal.pitch + semitones, dragOriginal.velocity); // hear where it lands
         moveSemitones = semitones;
         break;
     }
@@ -585,7 +693,9 @@ void PianoRollView::addNoteAt (juce::Point<float> position)
     const auto step = snapTicks (snap);
     const auto start = std::clamp (static_cast<int> (std::floor (xToTick (position.x) / step)) * step, 0,
                                    shown.length * Note::ticksPerStep - 1);
-    run ("note.add", { { "at", start }, { "note", yToPitch (position.y) }, { "length", newNoteLength } });
+    const auto pitch = lockedPitch (yToPitch (position.y));
+    run ("note.add", { { "at", start }, { "note", pitch }, { "length", newNoteLength } });
+    hear (pitch, core::Note::defaultVelocity);
 }
 
 void PianoRollView::mouseUp (const juce::MouseEvent& e)
@@ -687,8 +797,17 @@ bool PianoRollView::keyPressed (const juce::KeyPress& key)
     return false; // everything else (Space, F-keys...) is the window's
 }
 
-void PianoRollView::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
+void PianoRollView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
-    scrollBy (-wheel.deltaY * rowHeight * 12.0f);
+    if (! e.mods.isCommandDown())
+    {
+        scrollBy (-wheel.deltaY * rowHeight * 12.0f);
+        return;
+    }
+    // Ctrl+wheel zooms the rows, keeping the pitch under the mouse where it is.
+    const auto anchor = (e.position.y - grid.getY() + scrollY) / rowHeight;
+    rowHeight = std::clamp (rowHeight * (wheel.deltaY > 0 ? 1.15f : 1.0f / 1.15f), minRowHeight, maxRowHeight);
+    scrollY = anchor * rowHeight - (e.position.y - grid.getY());
+    scrollBy (0.0f);
 }
 } // namespace tekno::ui

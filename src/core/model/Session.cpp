@@ -40,6 +40,7 @@ void Session::clearProject()
     project.file = juce::File();
     project.revision = project.savedRevision = 0;
     project.warnings.clear();
+    project.key = {};
 }
 
 void Session::loadDefaultProject()
@@ -99,6 +100,7 @@ void Session::loadDefaultProject()
         first.setStep (acid, i, line[i]);
 
     selectedChannel = acid;
+    project.key = { 9, Scale::minor }; // La minore: the scale of the line above
     project.revision = project.savedRevision = 0;
 }
 
@@ -203,6 +205,14 @@ juce::String Session::setChannelSample (int index, const juce::String& origin)
     const auto result = samples.get (origin);
     c.sample = result.sample;
     return result.error;
+}
+
+void Session::requestPreview (int channel, int pitch, int velocity) noexcept
+{
+    const auto number = (preview.load() >> 32) + 1;
+    preview.store ((number << 32) | (static_cast<std::uint64_t> (std::clamp (channel, 0, maxChannels - 1)) << 16) |
+                   (static_cast<std::uint64_t> (std::clamp (velocity, 0, 127)) << 8) |
+                   static_cast<std::uint64_t> (std::clamp (pitch, 0, 127)));
 }
 
 void Session::collectSampleGarbage()

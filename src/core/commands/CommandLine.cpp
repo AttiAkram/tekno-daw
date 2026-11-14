@@ -173,6 +173,8 @@ const std::vector<std::pair<juce::String, juce::String>>& CommandLine::aliases()
         { "pan", "mixer.pan" },
         { "mute", "mixer.mute" },
         { "solo", "mixer.solo" },
+        { "key", "key.set" },
+        { "hear", "note.preview" },
     };
     return list;
 }

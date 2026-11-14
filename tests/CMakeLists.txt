@@ -11,6 +11,7 @@ add_executable(tekno_tests
     core/MidiImportTests.cpp
     core/NoteTests.cpp
     core/PatternTests.cpp
+    core/ScaleTests.cpp
     core/ProjectFileTests.cpp
     core/VersionTests.cpp
     ui/FontsTests.cpp

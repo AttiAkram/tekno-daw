@@ -8,6 +8,7 @@ add_library(tekno_core STATIC
     model/NoteNames.cpp
     model/Pattern.cpp
     model/SampleLibrary.cpp
+    model/Scale.cpp
     model/Session.cpp
     commands/CommandLine.cpp
     commands/CommandRegistry.cpp
