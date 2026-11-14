@@ -120,6 +120,17 @@ tekno-daw --smoke-test         open the window and quit after a second
 tekno-daw --version
 ```
 
+### Your own keys
+
+Every key runs a command line, the same language as the terminal, so a key can do anything you can
+type: `cutoff 0.8`, `ch 3`, `key E phrygian`. Keys belong to a context: global, a view (step
+sequencer, piano roll, mixer) or the kind of the selected channel (acid or drums). The most specific
+wins, so `1` can set the cutoff on an acid channel and the tuning on a drum channel. Edit them in the
+keys view (F10, or EDIT next to "Keys"): pick a context, press "press a key", write what it should do,
+add. The same key twice in one context is the only conflict, and you are told before replacing. From the
+terminal: `keys.bind acid 1 cutoff 0.2`, `keys.unbind acid 1`, `keys.list`, `keys.reset`. They are saved
+in `~/.config/tekno-daw/keymap.json`, which is plain JSON you can edit by hand.
+
 ## Terminal
 
 Press `` ` `` to open it. Every action of the DAW is a named command, and the terminal runs them:

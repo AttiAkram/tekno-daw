@@ -834,6 +834,31 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
             return CommandOutcome::ok();
         },
         false);
+    for (const auto next : { true, false })
+    {
+        add (
+            registry, next ? "pattern.next" : "pattern.previous",
+            next ? "Select the next pattern" : "Select the previous pattern", {},
+            [&session, next] (const CommandArgs&)
+            {
+                const auto index = std::clamp (session.selected.load() + (next ? 1 : -1), 0, Session::maxPatterns - 1);
+                session.selected.store (index);
+                if (! session.transport.playing.load())
+                    session.playing.store (index);
+                return CommandOutcome::ok();
+            },
+            false);
+        add (
+            registry, next ? "channel.next" : "channel.previous",
+            next ? "Select the next channel" : "Select the previous channel", {},
+            [&session, next] (const CommandArgs&)
+            {
+                session.selectedChannel.store (std::clamp (session.selectedChannel.load() + (next ? 1 : -1), 0,
+                                                           std::max (0, session.channelCount() - 1)));
+                return CommandOutcome::ok();
+            },
+            false);
+    }
     add (
         registry, "channel.add", "Add a channel at the end and select it: acid or sampler",
         { { "instrument", Type::text, 0, 0, "acid or sampler" },

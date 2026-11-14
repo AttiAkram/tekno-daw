@@ -786,46 +786,34 @@ void PianoRollView::mouseUp (const juce::MouseEvent& e)
     repaint();
 }
 
-bool PianoRollView::keyPressed (const juce::KeyPress& key)
+void PianoRollView::duplicate()
 {
-    if ((key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey) && ! selection.empty())
-    {
-        run ("notes.remove", { { "notes", selectionList() } });
-        selection.clear();
-        return true;
-    }
-    if (key == juce::KeyPress ('a', juce::ModifierKeys::commandModifier, 0))
-    {
-        selection.clear();
-        for (const auto& n : shown.notes)
-            selection.push_back ({ n.start, n.pitch });
-        repaint();
-        return true;
-    }
-    const auto command = juce::ModifierKeys::commandModifier;
-    if (key == juce::KeyPress ('c', command, 0) && ! selection.empty())
-    {
-        copySelection();
-        return true;
-    }
-    if (key == juce::KeyPress ('v', command, 0))
-    {
-        paste();
-        return true;
-    }
-    if (key == juce::KeyPress ('d', command, 0) && ! selection.empty()) // duplicate: copy and paste
-    {
-        copySelection();
-        paste();
-        return true;
-    }
-    if (key == juce::KeyPress::escapeKey && ! selection.empty())
-    {
-        selection.clear();
-        repaint();
-        return true;
-    }
-    return false; // everything else (Space, F-keys...) is the window's
+    if (selection.empty())
+        return;
+    copySelection();
+    paste();
+}
+
+void PianoRollView::deleteSelection()
+{
+    if (selection.empty())
+        return;
+    run ("notes.remove", { { "notes", selectionList() } });
+    selection.clear();
+}
+
+void PianoRollView::selectAll()
+{
+    selection.clear();
+    for (const auto& n : shown.notes)
+        selection.push_back ({ n.start, n.pitch });
+    repaint();
+}
+
+void PianoRollView::deselect()
+{
+    selection.clear();
+    repaint();
 }
 
 void PianoRollView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
@@ -862,6 +850,8 @@ void PianoRollView::mouseWheelMove (const juce::MouseEvent& e, const juce::Mouse
 
 void PianoRollView::copySelection()
 {
+    if (selection.empty())
+        return;
     clipboard.clear();
     for (const auto& n : shown.notes)
         if (isSelected (n))

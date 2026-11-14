@@ -14,10 +14,12 @@
 #include "app/AppOptions.h"
 #include "app/MainWindow.h"
 #include "core/Version.h"
+#include "core/commands/CommandLine.h"
 #include "core/commands/SessionCommands.h"
 #include "core/engine/AudioEngine.h"
 #include "core/engine/OfflineRender.h"
 #include "core/model/Session.h"
+#include "ui/KeyBindings.h"
 #include "ui/Preferences.h"
 #include "ui/ProjectActions.h"
 #include "ui/theme/TeknoLookAndFeel.h"
@@ -98,13 +100,19 @@ public:
         else
             startAudio();
 
-        auto view = std::make_unique<ui::PatternView> (*lookAndFeel, session, commands, *projectActions,
-                                                       [this] { return audioStatus(); });
+        juce::StringArray keymapWarnings;
+        keymap = ui::keys::load (ui::keys::defaultFile(), keymapWarnings);
+        for (const auto& w : keymapWarnings)
+            juce::Logger::writeToLog ("keymap: " + w);
+
+        auto view = std::make_unique<ui::PatternView> (
+            *lookAndFeel, session, commands, *projectActions, [this] { return audioStatus(); }, keymap);
         auto* viewPtr = view.get();
         mainView = viewPtr;
         mainWindow = std::make_unique<MainWindow> (getApplicationName(), *lookAndFeel, std::move (view));
         if (const auto snap = ui::PianoRollView::snapFromName (preferences->snap()))
             mainView->setSnap (*snap);
+        mainView->onKeymapEdited = [this] { keymapChanged(); };
         mainView->getPianoRoll().setScaleLock (preferences->scaleLock());
         mainView->getPianoRoll().setPreview (preferences->preview());
 
@@ -245,6 +253,114 @@ private:
             "ui.preview", "Hear notes as they are placed or moved in the piano roll",
             [] (ui::PianoRollView& roll, bool on) { roll.setPreview (on); },
             [] (ui::Preferences& prefs, bool on) { prefs.setPreview (on); });
+        // Actions that only exist in the window, as commands so any key can run them.
+        auto addAction = [this] (const char* id, const char* description, std::function<void()> action)
+        {
+            commands.add ({ id,
+                            description,
+                            {},
+                            [this, action] (const core::CommandArgs&)
+                            {
+                                if (mainView == nullptr)
+                                    return core::CommandOutcome::fail ("there is no window");
+                                action();
+                                return core::CommandOutcome::ok();
+                            } });
+        };
+        addAction ("ui.terminal", "Open or close the terminal", [this] { mainView->toggleTerminal(); });
+        addAction ("ui.new", "New project, asking about unsaved changes", [this] { projectActions->newProject(); });
+        addAction ("ui.open", "Open a project with a file dialog", [this] { projectActions->openProject(); });
+        addAction ("ui.save", "Save, asking for a file the first time", [this] { projectActions->save(); });
+        addAction ("ui.saveAs", "Save to a new file, with a file dialog", [this] { projectActions->saveAs(); });
+        addAction ("ui.roll.copy", "Copy the piano roll's selected notes",
+                   [this] { mainView->getPianoRoll().copySelection(); });
+        addAction ("ui.roll.paste", "Paste after the copied notes", [this] { mainView->getPianoRoll().paste(); });
+        addAction ("ui.roll.duplicate", "Copy and paste the selection",
+                   [this] { mainView->getPianoRoll().duplicate(); });
+        addAction ("ui.roll.delete", "Delete the selected notes",
+                   [this] { mainView->getPianoRoll().deleteSelection(); });
+        addAction ("ui.roll.selectall", "Select every note in the piano roll",
+                   [this] { mainView->getPianoRoll().selectAll(); });
+        addAction ("ui.roll.deselect", "Clear the piano roll's selection",
+                   [this] { mainView->getPianoRoll().deselect(); });
+        commands.add ({ "ui.page",
+                        "Show the next or previous 16 steps of a long pattern",
+                        { { "direction", core::CommandParam::Type::text, 0, 0, "next or previous" } },
+                        [this] (const core::CommandArgs& args)
+                        {
+                            const auto direction = args["direction"].toString().trim().toLowerCase();
+                            if (direction != "next" && direction != "previous")
+                                return core::CommandOutcome::fail ("use next or previous");
+                            if (mainView != nullptr)
+                                mainView->showPage (mainView->currentPage() + (direction == "next" ? 1 : -1));
+                            return core::CommandOutcome::ok();
+                        } });
+
+        // The keymap, from the terminal (the keys view does the same with the mouse).
+        commands.add ({ "keys.bind",
+                        "Make a key run a command line in a context: keys.bind acid ctrl+1 cutoff 0.2",
+                        { { "context", core::CommandParam::Type::text, 0, 0,
+                            "global, pattern, pianoroll, mixer, acid or sampler" },
+                          { "key", core::CommandParam::Type::text, 0, 0, "e.g. ctrl+1, F5, space (no spaces inside)" },
+                          { "command", core::CommandParam::Type::text, 0, 0, "the command line it runs" } },
+                        [this] (const core::CommandArgs& args)
+                        {
+                            const auto context = args["context"].toString().trim().toLowerCase();
+                            if (! core::Keymap::contexts().contains (context))
+                                return core::CommandOutcome::fail ("unknown context '" + context + "': use " +
+                                                                   core::Keymap::contexts().joinIntoString (", "));
+                            const auto key = ui::keys::normalise (args["key"].toString());
+                            if (! key)
+                                return core::CommandOutcome::fail ("'" + args["key"].toString() + "' is not a key");
+                            const auto command = args["command"].toString().trim();
+                            if (const auto parsed = core::CommandLine::parse (command, commands); ! parsed.command)
+                                return core::CommandOutcome::fail ("the command doesn't work: " + parsed.error);
+                            const auto replaced = keymap.bind ({ context, *key, command, {} });
+                            keymapChanged();
+                            auto outcome = core::CommandOutcome::ok();
+                            outcome.note = *key + " in " + context + " now runs \"" + command + "\"" +
+                                           (replaced ? " (it ran \"" + replaced->command + "\")" : juce::String());
+                            return outcome;
+                        } });
+        commands.add ({ "keys.unbind",
+                        "Remove a key from a context",
+                        { { "context", core::CommandParam::Type::text, 0, 0, "the context" },
+                          { "key", core::CommandParam::Type::text, 0, 0, "e.g. ctrl+1" } },
+                        [this] (const core::CommandArgs& args)
+                        {
+                            const auto key = ui::keys::normalise (args["key"].toString());
+                            if (! key || ! keymap.unbind (args["context"].toString().trim().toLowerCase(), *key))
+                                return core::CommandOutcome::fail ("no such key in that context");
+                            keymapChanged();
+                            return core::CommandOutcome::ok();
+                        } });
+        commands.add ({ "keys.list",
+                        "Show the keys of a context, or all of them",
+                        { { "context", core::CommandParam::Type::text, 0, 0, "a context (default: all)", true } },
+                        [this] (const core::CommandArgs& args)
+                        {
+                            const auto only = args.contains ("context")
+                                                  ? args["context"].toString().trim().toLowerCase()
+                                                  : juce::String();
+                            juce::StringArray lines;
+                            for (const auto& b : keymap.all())
+                                if (only.isEmpty() || b.context == only)
+                                    lines.add (b.context + "  " + b.key + "  ->  " + b.command +
+                                               (b.label.isNotEmpty() ? "   (" + b.label + ")" : juce::String()));
+                            auto outcome = core::CommandOutcome::ok();
+                            outcome.note = lines.isEmpty() ? juce::String ("no keys") : lines.joinIntoString ("\n");
+                            return outcome;
+                        } });
+        commands.add ({ "keys.reset",
+                        "Put every key back as tekno-daw ships it",
+                        {},
+                        [this] (const core::CommandArgs&)
+                        {
+                            keymap = ui::keys::defaults();
+                            keymapChanged();
+                            return core::CommandOutcome::ok();
+                        } });
+
         commands.add ({ "ui.notes",
                         "Name notes with letters (C D E) or as in Italy (Do Re Mi). Same octaves: C4 = Do4",
                         { { "names", core::CommandParam::Type::text, 0, 0, "letters or latin (abc, doremi)" } },
@@ -275,6 +391,15 @@ private:
                                 mainView->showView (*view);
                             return core::CommandOutcome::ok();
                         } });
+    }
+
+    /** The keymap changed: save it, and let the window show it. */
+    void keymapChanged()
+    {
+        if (! ui::keys::save (keymap, ui::keys::defaultFile()))
+            juce::Logger::writeToLog ("keymap: cannot save " + ui::keys::defaultFile().getFullPathName());
+        if (mainView != nullptr)
+            mainView->keymapChanged();
     }
 
     void exitEarly (int code)
@@ -315,6 +440,7 @@ private:
     std::unique_ptr<ui::TeknoLookAndFeel> lookAndFeel;
     std::unique_ptr<MainWindow> mainWindow;
     std::unique_ptr<ui::Preferences> preferences;
+    core::Keymap keymap;                 // the person's keys: ~/.config/tekno-daw/keymap.json
     ui::PatternView* mainView = nullptr; // owned by mainWindow; the target of ui.view
 };
 } // namespace tekno::app

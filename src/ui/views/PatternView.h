@@ -21,6 +21,7 @@
 #include "ui/components/Terminal.h"
 #include "ui/components/ValueChip.h"
 #include "ui/theme/TeknoLookAndFeel.h"
+#include "ui/views/KeysView.h"
 #include "ui/views/MixerView.h"
 #include "ui/views/PianoRollView.h"
 
@@ -46,7 +47,7 @@ class PatternView final : public juce::Component, public juce::FileDragAndDropTa
 {
 public:
     PatternView (TeknoLookAndFeel& lookAndFeel, core::Session& session, core::CommandRegistry& commands,
-                 ProjectActions& projectActions, std::function<AudioStatus()> audioStatus);
+                 ProjectActions& projectActions, std::function<AudioStatus()> audioStatus, core::Keymap& keymap);
 
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
@@ -75,9 +76,18 @@ public:
         pattern,
         pianoRoll,
         mixer,
+        keys, // the keys editor
     };
     void showView (View view);
     void setSnap (PianoRollView::Snap snap);
+    void toggleTerminal();
+    void showPage (int page);
+    int currentPage() const noexcept { return page; }
+    void keymapChanged();                 // the hints and the editor follow
+    std::function<void()> onKeymapEdited; // the keys editor changed the keymap: the app saves it
+
+    /** Where a key press looks, most specific first: the selected channel's instrument, the view, global. */
+    juce::StringArray activeKeyContexts() const;
     PianoRollView& getPianoRoll() noexcept { return pianoRoll; }
     View currentView() const noexcept { return view; }
     static std::optional<View> viewFromName (const juce::String& name);
@@ -155,7 +165,6 @@ private:
     int patternChipAt (juce::Point<float> position) const;
     void selectPattern (int index);
     void selectChannel (int index);
-    void showPage (int page);
     void startRename (int channel); // -1 = the pattern
     void finishRename (bool keep);
     void ensureChannelVisible (int channel);
@@ -164,7 +173,6 @@ private:
     void scrollRack (float delta);
     void layoutRack();
     void layoutKnobs();
-    void toggleTerminal();
     bool knobVisible (const Knob& knob) const;
 
     void paintTopBar (juce::Graphics&) const;
@@ -196,6 +204,9 @@ private:
     LevelMeters meters;
     MixerView mixer;
     PianoRollView pianoRoll;
+    core::Keymap& keymap;
+    KeysView keysEditor;
+    juce::TextButton editKeysButton { "edit" };
     std::array<juce::TextButton, 4> snapButtons;
     juce::TextButton keyButton; // the project's key: opens a menu of roots and scales
     void showKeyMenu();

@@ -8,9 +8,11 @@ add_library(tekno_ui STATIC
     components/LevelMeters.cpp
     components/Terminal.cpp
     components/ValueChip.cpp
+    views/KeysView.cpp
     views/MixerView.cpp
     views/PatternView.cpp
     views/PianoRollView.cpp
+    KeyBindings.cpp
     Preferences.cpp
     ProjectActions.cpp)
 add_library(tekno::ui ALIAS tekno_ui)

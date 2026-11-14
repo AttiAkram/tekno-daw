@@ -12,6 +12,7 @@ add_library(tekno_core STATIC
     model/Session.cpp
     commands/CommandLine.cpp
     commands/CommandRegistry.cpp
+    commands/Keymap.cpp
     commands/SessionCommands.cpp
     dsp/AcidVoice.cpp
     dsp/BuiltinKit.cpp

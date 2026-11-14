@@ -8,6 +8,7 @@ add_executable(tekno_tests
     core/CommandLineTests.cpp
     core/CommandTests.cpp
     core/DriveTests.cpp
+    core/KeymapTests.cpp
     core/MidiImportTests.cpp
     core/NoteTests.cpp
     core/PatternTests.cpp
@@ -15,6 +16,7 @@ add_executable(tekno_tests
     core/ProjectFileTests.cpp
     core/VersionTests.cpp
     ui/FontsTests.cpp
+    ui/KeyBindingsTests.cpp
     ui/MixerTests.cpp
     ui/PaletteTests.cpp
     ui/TokensTests.cpp)
@@ -61,18 +63,19 @@ if(TEKNO_GUI_TESTS)
     add_test(NAME app.snapshot.dark  COMMAND tekno-daw ${gui_test_args} --theme=dark  "--snapshot=${CMAKE_BINARY_DIR}/snapshots/pattern-dark.png")
     add_test(NAME app.snapshot.light COMMAND tekno-daw ${gui_test_args} --theme=light "--snapshot=${CMAKE_BINARY_DIR}/snapshots/pattern-light.png")
     add_test(NAME app.snapshot.pianoroll COMMAND tekno-daw ${gui_test_args} --theme=light --view=pianoroll "--snapshot=${CMAKE_BINARY_DIR}/snapshots/pianoroll-light.png")
+    add_test(NAME app.snapshot.keys COMMAND tekno-daw ${gui_test_args} --theme=light --view=keys "--snapshot=${CMAKE_BINARY_DIR}/snapshots/keys-light.png")
     add_test(NAME app.snapshot.mixer COMMAND tekno-daw ${gui_test_args} --theme=dark --view=mixer "--snapshot=${CMAKE_BINARY_DIR}/snapshots/mixer-dark.png")
 
     # Window tests never read or write the developer's own settings: they get an empty config folder.
     set(gui_test_env "XDG_CONFIG_HOME=${CMAKE_BINARY_DIR}/test-config")
-    set_tests_properties(app.smoke app.snapshot.dark app.snapshot.light app.snapshot.mixer app.snapshot.pianoroll PROPERTIES
+    set_tests_properties(app.smoke app.snapshot.dark app.snapshot.light app.snapshot.mixer app.snapshot.pianoroll app.snapshot.keys PROPERTIES
         ENVIRONMENT "${gui_test_env}"
         TIMEOUT 30
         FAIL_REGULAR_EXPRESSION "${juce_failures}"
         RESOURCE_LOCK display)
 
     if(TEKNO_SANITIZERS)
-        set_tests_properties(app.smoke app.snapshot.dark app.snapshot.light app.snapshot.mixer app.snapshot.pianoroll PROPERTIES
+        set_tests_properties(app.smoke app.snapshot.dark app.snapshot.light app.snapshot.mixer app.snapshot.pianoroll app.snapshot.keys PROPERTIES
             ENVIRONMENT "${gui_test_env};LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/sanitizers/lsan.supp:print_suppressions=0")
     endif()
 endif()

@@ -8,7 +8,9 @@
 
 #include "ui/views/PatternView.h"
 
+#include "core/commands/CommandLine.h"
 #include "core/model/NoteNames.h"
+#include "ui/KeyBindings.h"
 
 namespace tekno::ui
 {
@@ -66,7 +68,8 @@ namespace
 } // namespace
 
 PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionToShow, core::CommandRegistry& registry,
-                          ProjectActions& projectActions, std::function<AudioStatus()> audioStatusProvider)
+                          ProjectActions& projectActions, std::function<AudioStatus()> audioStatusProvider,
+                          core::Keymap& keymapToUse)
     : lnf (teknoLookAndFeel)
     , session (sessionToShow)
     , commands (registry)
@@ -182,6 +185,8 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
     , meters (sessionToShow)
     , mixer (teknoLookAndFeel, sessionToShow, registry, meters)
     , pianoRoll (teknoLookAndFeel, sessionToShow, registry)
+    , keymap (keymapToUse)
+    , keysEditor (teknoLookAndFeel, keymapToUse, registry)
 {
     setWantsKeyboardFocus (true);
 
@@ -201,6 +206,16 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
     navButtons[2].onClick = [this] { run ("ui.view", { { "view", "mixer" } }); };
 
     addChildComponent (pianoRoll);
+    addChildComponent (keysEditor);
+    keysEditor.onChange = [this]
+    {
+        if (onKeymapEdited)
+            onKeymapEdited();
+        repaint (leftColumn.toNearestInt());
+    };
+    editKeysButton.setMouseClickGrabsKeyboardFocus (false);
+    editKeysButton.onClick = [this] { run ("ui.view", { { "view", "keys" } }); };
+    addAndMakeVisible (editKeysButton);
     using Snap = PianoRollView::Snap;
     const std::array<Snap, 4> snaps { Snap::step, Snap::thirtySecond, Snap::triplet, Snap::free };
     for (size_t i = 0; i < snapButtons.size(); ++i)
@@ -505,7 +520,13 @@ void PatternView::resized()
     mixer.setVisible (view == View::mixer);
     pianoRoll.setBounds (gridArea.toNearestInt());
     pianoRoll.setVisible (view == View::pianoRoll);
-    lengthChip.setVisible (view != View::mixer);
+    keysEditor.setBounds (patternBarArea.getUnion (gridArea).toNearestInt());
+    keysEditor.setVisible (view == View::keys);
+    editKeysButton.setBounds (keysArea.withHeight (28.0f)
+                                  .withLeft (keysArea.getRight() - 56.0f)
+                                  .withSizeKeepingCentre (56.0f, shape::pillHeightCompact)
+                                  .toNearestInt());
+    lengthChip.setVisible (view == View::pattern || view == View::pianoRoll);
 
     // Snap choices and the key, left of the length chip, only where they matter.
     auto snapArea = patternBarArea.withRight (lengthChip.getX() - space::gap);
@@ -602,6 +623,8 @@ std::optional<PatternView::View> PatternView::viewFromName (const juce::String& 
         return View::pianoRoll;
     if (name == "mixer")
         return View::mixer;
+    if (name == "keys")
+        return View::keys;
     return std::nullopt;
 }
 
@@ -826,27 +849,35 @@ void PatternView::paintLeftColumn (juce::Graphics& g) const
 
     auto keys = keysArea;
     drawText (g, "Keys", type::sectionTitle, ink, keys.removeFromTop (28.0f));
-    const std::array<std::pair<const char*, const char*>, 12> hints { {
-        { "Space", "play / stop" },
-        { "Click", "step on / off" },
-        { "Shift Ctrl Alt", "accent, slide, tie" },
-        { "Wheel", "pitch" },
-        { "Up / Down", "channel" },
-        { "F6 F7 F9", "steps, roll, mixer" },
-        { "PgUp / PgDn", "pattern" },
-        { "[  ]", "bar of the pattern" },
-        { "Ctrl+Z / Y", "undo / redo" },
-        { "Ctrl+S / O", "save / open" },
-        { "T", "theme" },
-        { "`", "terminal" },
-    } };
-    for (const auto& [key, what] : hints)
+    // The keys that work right now: the most specific context first, and inside each the most useful
+    // commands first (the keymap itself is sorted by key, which reads badly here).
+    auto usefulness = [] (const core::Keymap::Binding& b)
     {
-        if (keys.getHeight() < 20.0f)
-            break;
-        auto line = keys.removeFromTop (20.0f);
-        drawText (g, key, type::meta, ink, line.removeFromLeft (92.0f));
-        drawText (g, what, type::meta, muted, line);
+        static const juce::StringArray order { "transport",   "edit.undo", "edit.redo", "ui.view",
+                                               "channel.",    "pattern.",  "ui.page",   "ui.roll",
+                                               "ui.terminal", "ui.save",   "ui.open",   "ui.new" };
+        for (int i = 0; i < order.size(); ++i)
+            if (b.command.startsWith (order[i]))
+                return i;
+        return order.size(); // anything else after these
+    };
+    juce::StringArray seen;
+    for (const auto& context : activeKeyContexts())
+    {
+        auto bindings = keymap.inContext (context);
+        std::stable_sort (bindings.begin(), bindings.end(),
+                          [&] (const auto& a, const auto& b) { return usefulness (a) < usefulness (b); });
+        for (const auto& b : bindings)
+        {
+            if (keys.getHeight() < 20.0f)
+                break;
+            if (seen.contains (b.key, true))
+                continue; // covered by a more specific binding
+            seen.add (b.key);
+            auto line = keys.removeFromTop (20.0f);
+            drawText (g, b.key, type::meta, ink, line.removeFromLeft (112.0f));
+            drawText (g, b.label.isNotEmpty() ? b.label : b.command, type::meta, muted, line);
+        }
     }
 
     auto audio = audioArea;
@@ -883,6 +914,17 @@ void PatternView::paintContent (juce::Graphics& g) const
         g.drawDashedLine ({ dividerArea.getX(), dividerArea.getY(), dividerArea.getRight(), dividerArea.getY() },
                           dashes, 2, shape::lineWidth);
     };
+
+    if (view == View::keys)
+    {
+        drawText (g, "Keys", type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
+        drawText (g,
+                  juce::String (static_cast<int> (keymap.all().size())) +
+                      " keys  /  a key runs a command line, like the terminal  /  F6 to go back",
+                  type::meta, muted, metaArea);
+        divider();
+        return; // the KeysView component draws the rest
+    }
 
     if (view == View::mixer)
     {
@@ -1435,50 +1477,37 @@ void PatternView::showStatus (const juce::String& text)
     repaint();
 }
 
+juce::StringArray PatternView::activeKeyContexts() const
+{
+    juce::StringArray contexts;
+    if (shown.channels > 0)
+        contexts.add (shown.isSampler (shown.selectedChannel) ? "sampler" : "acid");
+    contexts.add (view == View::pianoRoll ? "pianoroll"
+                  : view == View::mixer   ? "mixer"
+                  : view == View::keys    ? "keys"
+                                          : "pattern");
+    contexts.add ("global");
+    return contexts;
+}
+
+void PatternView::keymapChanged()
+{
+    keysEditor.refresh();
+    repaint (leftColumn.toNearestInt());
+}
+
 bool PatternView::keyPressed (const juce::KeyPress& key)
 {
-    // The keymap of this view: a key runs a command or a project action. Contextual, user-editable
-    // keymaps replace this table later in M3.
-    using K = juce::KeyPress;
-    using M = juce::ModifierKeys;
-    const auto cmd = M::commandModifier, shift = M::shiftModifier;
-
-    struct Binding
-    {
-        K key;
-        std::function<void()> action;
-    };
-    const std::array<Binding, 19> bindings { {
-        { K ('`'), [this] { toggleTerminal(); } },
-        { K (K::spaceKey), [this] { run ("transport.toggle"); } },
-        { K ('t'), [this] { run ("ui.theme.toggle"); } },
-        { K ('z', cmd, 0), [this] { run ("edit.undo"); } },
-        { K ('z', cmd | shift, 0), [this] { run ("edit.redo"); } },
-        { K ('y', cmd, 0), [this] { run ("edit.redo"); } },
-        { K ('s', cmd, 0), [this] { actions.save(); } },
-        { K ('s', cmd | shift, 0), [this] { actions.saveAs(); } },
-        { K ('o', cmd, 0), [this] { actions.openProject(); } },
-        { K ('n', cmd, 0), [this] { actions.newProject(); } },
-        { K (K::pageUpKey), [this] { selectPattern (shown.selected - 1); } },
-        { K (K::pageDownKey), [this] { selectPattern (shown.selected + 1); } },
-        { K (K::upKey), [this] { selectChannel (shown.selectedChannel - 1); } },
-        { K (K::downKey), [this] { selectChannel (shown.selectedChannel + 1); } },
-        { K (K::F6Key), [this] { run ("ui.view", { { "view", "pattern" } }); } },
-        { K (K::F7Key), [this] { run ("ui.view", { { "view", "pianoroll" } }); } },
-        { K (K::F9Key), [this] { run ("ui.view", { { "view", "mixer" } }); } },
-        { K ('['), [this] { showPage (page - 1); } },
-        { K (']'), [this] { showPage (page + 1); } },
-    } };
-
-    for (const auto& binding : bindings)
-    {
-        if (binding.key == key)
-        {
-            binding.action();
-            timerCallback();
-            return true;
-        }
-    }
-    return false;
+    // Every key is a binding of the keymap: a command line, looked up from the most specific context.
+    const auto binding = keymap.find (keys::describe (key), activeKeyContexts());
+    if (! binding)
+        return false;
+    const auto parsed = core::CommandLine::parse (binding->command, commands);
+    if (! parsed.command)
+        showStatus ("the key " + binding->key + " runs \"" + binding->command + "\": " + parsed.error);
+    else if (const auto outcome = commands.execute (parsed.command->id, parsed.command->args); ! outcome.succeeded())
+        showStatus (outcome.error);
+    timerCallback();
+    return true;
 }
 } // namespace tekno::ui

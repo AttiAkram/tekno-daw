@@ -62,7 +62,14 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
-    bool keyPressed (const juce::KeyPress&) override;
+
+    // Actions on the selection, run by the ui.roll.* commands (and so by any key bound to them).
+    void copySelection();
+    void paste();
+    void duplicate();
+    void deleteSelection();
+    void selectAll();
+    void deselect();
 
     /** The selected notes, as (start, pitch). View state: not saved, not undone. */
     const std::vector<std::pair<int, int>>& getSelection() const noexcept { return selection; }
@@ -115,8 +122,6 @@ private:
     int lockedPitch (int pitch) const noexcept; // onto the scale when the lock is on
     float ticksToPixels() const noexcept;
     void scrollHorizontallyBy (float pixels);
-    void copySelection();
-    void paste();
 
     TeknoLookAndFeel& lnf;
     core::Session& session;
