@@ -101,6 +101,7 @@ private:
         double releaseFraction = 0.0;
 
         float gainLeft = 0.0f, gainRight = 0.0f; // gains reached at the end of the last block
+        float acidGain = 1.0f, acidGainTarget = 1.0f; // the acid note's velocity, glided to avoid clicks
 
         void resetPlayback() noexcept
         {
@@ -127,6 +128,7 @@ private:
     double samplesIntoStep = 0.0;
     double currentStepLength = 0.0;
     float masterGain = 1.0f;
+    float velocityGlide = 1.0f; // per-sample step of the acid velocity glide (about 2 ms)
 
     JUCE_DECLARE_NON_COPYABLE (AudioEngine)
 };

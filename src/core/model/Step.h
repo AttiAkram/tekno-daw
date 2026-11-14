@@ -25,6 +25,7 @@ struct Step
     bool slide = false; // keep the gate open and glide into the next step
     int note = 45;      // MIDI note number, A2
     bool tie = false;   // don't play a new note: hold the previous one through this step
+    int velocity = 100; // 0..127, the note's loudness (Note::defaultVelocity)
 
     /** Packs the step into 32 bits, so a whole step can be stored in one lock-free atomic. */
     std::uint32_t pack() const noexcept;

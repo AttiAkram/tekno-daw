@@ -57,7 +57,7 @@ Sampler::Voice* Sampler::freeVoice() noexcept
                                [] (const Voice& a, const Voice& b) { return a.fade < b.fade; });
 }
 
-void Sampler::trigger (int midiNote, bool accented) noexcept
+void Sampler::trigger (int midiNote, bool accented, float gain) noexcept
 {
     if (sample == nullptr || sample->length() < 2)
         return;
@@ -81,7 +81,7 @@ void Sampler::trigger (int midiNote, bool accented) noexcept
     v.fading = false;
     v.position = 0.0;
     v.rate = std::pow (2.0, semitones / 12.0) * sample->sampleRate / sampleRate;
-    v.gain = accented ? 1.0f + current.accent : 1.0f;
+    v.gain = (accented ? 1.0f + current.accent : 1.0f) * gain;
     v.envelope = 1.0f;
     const auto seconds = decaySeconds (current.decay);
     v.decayFactor =

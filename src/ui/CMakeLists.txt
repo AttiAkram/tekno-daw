@@ -11,6 +11,7 @@ add_library(tekno_ui STATIC
     views/MixerView.cpp
     views/PatternView.cpp
     views/PianoRollView.cpp
+    Preferences.cpp
     ProjectActions.cpp)
 add_library(tekno::ui ALIAS tekno_ui)
 

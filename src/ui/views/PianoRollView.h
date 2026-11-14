@@ -23,8 +23,10 @@ namespace tekno::ui
     with the other channels' notes in grey behind them (ghost notes).
 
     Click to add a note, drag it to move it, drag its right edge to change its length, right-click to
-    delete it; Shift+click for accent, Ctrl+click for slide. A drag is previewed and runs one note.*
-    command when released, so it is one undo step and the same action the terminal would run. */
+    delete it; Shift+click for accent, Ctrl+click for slide. Hold and drag on empty space to select
+    several notes, then drag one of them to move them all; Delete removes them. The lane at the bottom
+    shows each note's velocity: drag a bar up or down. Every gesture is previewed and runs one note(s).*
+    command when released: one undo step, the same action the terminal would run. */
 class PianoRollView final : public juce::Component, private juce::Timer
 {
 public:
@@ -52,6 +54,10 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    bool keyPressed (const juce::KeyPress&) override;
+
+    /** The selected notes, as (start, pitch). View state: not saved, not undone. */
+    const std::vector<std::pair<int, int>>& getSelection() const noexcept { return selection; }
 
     static constexpr int lowestNote = core::Step::minNote;
     static constexpr int highestNote = core::Step::maxNote;
@@ -69,8 +75,10 @@ private:
     enum class Drag
     {
         none,
-        move,
-        resize,
+        move,     // the selection, by moveTicks and moveSemitones
+        resize,   // one note's length
+        select,   // a rectangle from dragStart
+        velocity, // one note's bar in the velocity lane (or the whole selection's)
     };
 
     void timerCallback() override;
@@ -88,6 +96,11 @@ private:
     juce::Rectangle<float> noteArea (const core::Note& note) const noexcept;
     int noteAt (juce::Point<float> position) const noexcept; // index into shown.notes, or -1
     bool onRightEdge (const core::Note& note, juce::Point<float> position) const noexcept;
+    bool isSelected (const core::Note& note) const noexcept;
+    juce::String selectionList() const;                             // "48:57 72:60", for the notes.* commands
+    int velocityBarAt (juce::Point<float> position) const noexcept; // index into shown.notes, or -1
+    int velocityFromY (float y) const noexcept;
+    void addNoteAt (juce::Point<float> position);
 
     TeknoLookAndFeel& lnf;
     core::Session& session;
@@ -100,10 +113,12 @@ private:
     int scrolledFor = -1; // pattern * 16 + channel the view last scrolled to
 
     Drag drag = Drag::none;
-    core::Note dragOriginal, dragNow;
-    juce::Point<float> dragStart;
+    core::Note dragOriginal, dragNow; // the note grabbed (resize, velocity) and how it looks now
+    juce::Point<float> dragStart, dragEnd;
+    int moveTicks = 0, moveSemitones = 0;
+    std::vector<std::pair<int, int>> selection;
 
-    juce::Rectangle<float> keyboard, grid;
+    juce::Rectangle<float> keyboard, grid, velocityLane, velocityLabel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PianoRollView)
 };

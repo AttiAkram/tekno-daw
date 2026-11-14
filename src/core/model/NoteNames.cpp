@@ -8,47 +8,74 @@
 
 #include "core/model/NoteNames.h"
 
+#include <atomic>
+#include <cstring>
+
 namespace tekno::core
 {
 namespace
 {
-    constexpr const char* sharpNames[] { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-    constexpr int naturals[] { 9, 11, 0, 2, 4, 5, 7 }; // A B C D E F G
+    constexpr const char* letterNames[] { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+    constexpr const char* latinNames[] {
+        "Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si"
+    };
+
+    struct Name
+    {
+        const char* text;
+        int pitchClass;
+    };
+    // Longest first, so "sol" wins over "so..." and "si" is not read as "s" + "i".
+    constexpr Name natural[] { { "sol", 7 }, { "do", 0 },  { "re", 2 }, { "mi", 4 }, { "fa", 5 },
+                               { "la", 9 },  { "si", 11 }, { "c", 0 },  { "d", 2 },  { "e", 4 },
+                               { "f", 5 },   { "g", 7 },   { "a", 9 },  { "b", 11 } };
+
+    std::atomic<NoteNaming> preferred { NoteNaming::letters };
 } // namespace
+
+void setNoteNaming (NoteNaming naming) noexcept
+{
+    preferred.store (naming);
+}
+
+NoteNaming getNoteNaming() noexcept
+{
+    return preferred.load();
+}
 
 juce::String noteName (int midiNote)
 {
-    const auto octave = midiNote / 12 - 1;
-    return juce::String (sharpNames[((midiNote % 12) + 12) % 12]) + juce::String (octave);
+    return noteName (midiNote, getNoteNaming());
+}
+
+juce::String noteName (int midiNote, NoteNaming naming)
+{
+    const auto octave = (midiNote >= 0 ? midiNote / 12 : (midiNote - 11) / 12) - 1;
+    const auto pitchClass = ((midiNote % 12) + 12) % 12;
+    const auto* names = naming == NoteNaming::latin ? latinNames : letterNames;
+    return juce::String (names[pitchClass]) + juce::String (octave);
 }
 
 std::optional<int> parseNoteName (const juce::String& raw)
 {
-    const auto text = raw.trim();
-    if (text.length() < 2)
-        return std::nullopt;
+    const auto text = raw.trim().toLowerCase();
 
-    const auto letter = juce::CharacterFunctions::toUpperCase (text[0]);
-    if (letter < 'A' || letter > 'G')
-        return std::nullopt;
-    auto pitchClass = naturals[letter - 'A'];
-
-    int pos = 1;
-    if (text[pos] == '#')
+    for (const auto& name : natural)
     {
-        ++pitchClass;
-        ++pos;
-    }
-    else if (text[pos] == 'b')
-    {
-        --pitchClass;
-        ++pos;
-    }
+        if (! text.startsWith (name.text))
+            continue;
+        auto pitchClass = name.pitchClass;
+        auto pos = static_cast<int> (std::strlen (name.text));
+        if (text[pos] == '#')
+            ++pitchClass, ++pos;
+        else if (text[pos] == 'b')
+            --pitchClass, ++pos;
 
-    const auto octaveText = text.substring (pos);
-    if (octaveText.isEmpty() || ! octaveText.containsOnly ("-0123456789"))
-        return std::nullopt;
-
-    return (octaveText.getIntValue() + 1) * 12 + pitchClass;
+        const auto octaveText = text.substring (pos);
+        if (octaveText.isEmpty() || ! octaveText.containsOnly ("-0123456789"))
+            return std::nullopt;
+        return (octaveText.getIntValue() + 1) * 12 + pitchClass;
+    }
+    return std::nullopt;
 }
 } // namespace tekno::core

@@ -42,8 +42,9 @@ namespace
     juce::String noteLine (const Note& n)
     {
         return "{ \"at\": " + juce::String (n.start) + ", \"length\": " + juce::String (n.length) +
-               ", \"note\": " + quoted (noteName (n.pitch)) + ", \"accent\": " + boolean (n.accent) +
-               ", \"slide\": " + boolean (n.slide) + " }";
+               ", \"note\": " + quoted (noteName (n.pitch, NoteNaming::letters)) +
+               ", \"accent\": " + boolean (n.accent) + ", \"slide\": " + boolean (n.slide) +
+               ", \"velocity\": " + juce::String (n.velocity) + " }";
     }
 
     juce::String acidLine (const AcidSettings& a)
@@ -193,11 +194,12 @@ namespace
                 st.accent = boolean (step, "accent", stepPath, false);
                 st.slide = boolean (step, "slide", stepPath, false);
                 st.tie = boolean (step, "tie", stepPath, false);
-                const auto name = text (step, "note", stepPath, noteName (defaultNote));
+                const auto name = text (step, "note", stepPath, noteName (defaultNote, NoteNaming::letters));
                 const auto note = parseNoteName (name);
                 if (! note || *note < Step::minNote || *note > Step::maxNote)
-                    fail (stepPath + ".note", "'" + name + "' is not a note between " + noteName (Step::minNote) +
-                                                  " and " + noteName (Step::maxNote));
+                    fail (stepPath + ".note", "'" + name + "' is not a note between " +
+                                                  noteName (Step::minNote, NoteNaming::letters) + " and " +
+                                                  noteName (Step::maxNote, NoteNaming::letters));
                 else
                     st.note = *note;
             }
@@ -225,11 +227,13 @@ namespace
             note.length = static_cast<int> (r.number (n, "length", notePath, Note::ticksPerStep, 1, lastTick));
             note.accent = r.boolean (n, "accent", notePath, false);
             note.slide = r.boolean (n, "slide", notePath, false);
-            const auto name = r.text (n, "note", notePath, noteName (note.pitch));
+            note.velocity = static_cast<int> (r.number (n, "velocity", notePath, Note::defaultVelocity, 0, 127));
+            const auto name = r.text (n, "note", notePath, noteName (note.pitch, NoteNaming::letters));
             const auto pitch = parseNoteName (name);
             if (! pitch || *pitch < Step::minNote || *pitch > Step::maxNote)
-                r.fail (notePath + ".note", "'" + name + "' is not a note between " + noteName (Step::minNote) +
-                                                " and " + noteName (Step::maxNote));
+                r.fail (notePath + ".note", "'" + name + "' is not a note between " +
+                                                noteName (Step::minNote, NoteNaming::letters) + " and " +
+                                                noteName (Step::maxNote, NoteNaming::letters));
             else
                 note.pitch = *pitch;
             out.push_back (note);

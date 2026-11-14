@@ -17,7 +17,9 @@ namespace tekno::core
 std::uint32_t Step::pack() const noexcept
 {
     const auto clampedNote = static_cast<std::uint32_t> (std::clamp (note, minNote, maxNote));
-    return (on ? 1u : 0u) | (accent ? 2u : 0u) | (slide ? 4u : 0u) | (tie ? 8u : 0u) | (clampedNote << 8);
+    const auto clampedVelocity = static_cast<std::uint32_t> (std::clamp (velocity, 0, 127));
+    return (on ? 1u : 0u) | (accent ? 2u : 0u) | (slide ? 4u : 0u) | (tie ? 8u : 0u) | (clampedNote << 8) |
+           (clampedVelocity << 16);
 }
 
 Step Step::unpack (std::uint32_t bits) noexcept
@@ -28,6 +30,7 @@ Step Step::unpack (std::uint32_t bits) noexcept
     s.slide = (bits & 4u) != 0;
     s.tie = (bits & 8u) != 0;
     s.note = static_cast<int> ((bits >> 8) & 0x7fu);
+    s.velocity = static_cast<int> ((bits >> 16) & 0x7fu);
     return s;
 }
 
@@ -36,7 +39,9 @@ std::uint64_t Note::pack() const noexcept
     const auto s = static_cast<std::uint64_t> (std::clamp (start, 0, maxTicks));
     const auto l = static_cast<std::uint64_t> (std::clamp (length, 1, maxTicks));
     const auto p = static_cast<std::uint64_t> (std::clamp (pitch, 0, 127));
-    return s | (l << 16) | (p << 32) | (accent ? 1ull << 39 : 0) | (slide ? 1ull << 40 : 0) | (1ull << 63);
+    const auto v = static_cast<std::uint64_t> (std::clamp (velocity, 0, 127));
+    return s | (l << 16) | (p << 32) | (accent ? 1ull << 39 : 0) | (slide ? 1ull << 40 : 0) | (v << 41) |
+           (1ull << 63);
 }
 
 Note Note::unpack (std::uint64_t bits) noexcept
@@ -47,6 +52,7 @@ Note Note::unpack (std::uint64_t bits) noexcept
     n.pitch = static_cast<int> ((bits >> 32) & 0x7fu);
     n.accent = ((bits >> 39) & 1u) != 0;
     n.slide = ((bits >> 40) & 1u) != 0;
+    n.velocity = static_cast<int> ((bits >> 41) & 0x7fu);
     return n;
 }
 
@@ -160,7 +166,7 @@ namespace steps
                 continue;
             const auto first = n.start / tps;
             const auto stepsLong = n.length / tps;
-            out[static_cast<size_t> (first)] = Step { true, n.accent, stepsLong == 1 && n.slide, n.pitch, false };
+            out[static_cast<size_t> (first)] = Step { true, n.accent, stepsLong == 1 && n.slide, n.pitch, false, n.velocity };
 
             for (int j = 1; j < stepsLong; ++j)
             {
@@ -169,7 +175,8 @@ namespace steps
                     index -= length; // a note running past the end goes on at the start of the next round
                 if (index >= count || index == first || isStart[static_cast<size_t> (index)])
                     break;
-                out[static_cast<size_t> (index)] = Step { true, false, j == stepsLong - 1 && n.slide, n.pitch, true };
+                out[static_cast<size_t> (index)] =
+                    Step { true, false, j == stepsLong - 1 && n.slide, n.pitch, true, n.velocity };
             }
         }
         return out;
@@ -205,7 +212,7 @@ namespace steps
                 notes[static_cast<size_t> (open)].slide = s.slide;
                 continue;
             }
-            notes.push_back ({ i * tps, tps, s.note, s.accent, s.slide });
+            notes.push_back ({ i * tps, tps, s.note, s.accent, s.slide, s.velocity });
             open = static_cast<int> (notes.size()) - 1;
         }
 

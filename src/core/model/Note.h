@@ -18,12 +18,20 @@ struct Note
 {
     static constexpr int ticksPerStep = 24;
     static constexpr int maxTicks = 0xffff; // start and length are 16 bits
+    static constexpr int defaultVelocity = 100;
 
     int start = 0; // ticks from the start of the pattern
     int length = ticksPerStep;
     int pitch = 45; // MIDI note number
     bool accent = false;
     bool slide = false; // glide into a note that starts where this one ends, keeping the gate open
+    int velocity = defaultVelocity; // 0..127: loudness. 100 is unity gain
+
+    /** Linear gain of a velocity: velocity / 100, so the default changes nothing. */
+    static float velocityGain (int velocity) noexcept
+    {
+        return static_cast<float> (velocity < 0 ? 0 : (velocity > 127 ? 127 : velocity)) / 100.0f;
+    }
 
     int end() const noexcept { return start + length; }
     bool onGrid() const noexcept { return start % ticksPerStep == 0 && length % ticksPerStep == 0; }

@@ -80,3 +80,29 @@ TEST_CASE ("piano roll snaps: names and sizes in ticks", "[ui][pianoroll]")
     CHECK (PianoRollView::snapTicks (Snap::free) == 1);
     CHECK_FALSE (PianoRollView::snapFromName ("1/7").has_value());
 }
+
+#include "ui/Preferences.h"
+
+TEST_CASE ("preferences are kept between runs, and unknown values fall back", "[ui][preferences]")
+{
+    using tekno::ui::Preferences;
+    const auto file = juce::File::createTempFile (".xml");
+    {
+        Preferences prefs (file);
+        CHECK (prefs.noteNaming() == tekno::core::NoteNaming::letters); // the default
+        CHECK (prefs.snap() == "step");
+        prefs.setNoteNaming (tekno::core::NoteNaming::latin);
+        prefs.setSnap ("1/3");
+        prefs.setTheme (tekno::ui::tokens::Theme::light);
+    }
+    {
+        Preferences again (file);
+        CHECK (again.noteNaming() == tekno::core::NoteNaming::latin);
+        CHECK (again.snap() == "1/3");
+        CHECK (again.theme() == tekno::ui::tokens::Theme::light);
+    }
+    CHECK (Preferences::namingFromName ("doremi") == tekno::core::NoteNaming::latin);
+    CHECK (Preferences::namingFromName ("ABC") == tekno::core::NoteNaming::letters);
+    CHECK_FALSE (Preferences::namingFromName ("klingon").has_value());
+    file.deleteFile();
+}

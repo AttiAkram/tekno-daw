@@ -32,7 +32,8 @@ public:
     void setSample (const Sample* sample) noexcept;
     void setSettings (const SamplerSettings& settings) noexcept { current = settings; }
 
-    void trigger (int midiNote, bool accented) noexcept;
+    /** `gain` scales this hit (the note's velocity): 1 = as the sample is. */
+    void trigger (int midiNote, bool accented, float gain = 1.0f) noexcept;
 
     /** Adds this sample's output to left and right. */
     void process (float& left, float& right) noexcept;

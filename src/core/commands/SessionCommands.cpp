@@ -12,6 +12,7 @@
 #include <array>
 #include <optional>
 
+#include "core/io/MidiImport.h"
 #include "core/io/ProjectFile.h"
 #include "core/model/NoteNames.h"
 
@@ -144,6 +145,62 @@ namespace
         const int pitch = args["note"];
         return std::find_if (notes.begin(), notes.end(),
                              [at, pitch] (const Note& n) { return n.start == at && n.pitch == pitch; });
+    }
+
+    /** "48:A2 72:Do3" (position in ticks : pitch, by name or number), spaces or commas between. */
+    std::optional<std::vector<std::pair<int, int>>> parseNoteList (const juce::String& text, juce::String& error)
+    {
+        std::vector<std::pair<int, int>> list;
+        auto tokens = juce::StringArray::fromTokens (text.replaceCharacter (',', ' '), " ", "\"");
+        tokens.removeEmptyStrings();
+        for (const auto& token : tokens)
+        {
+            const auto at = token.upToFirstOccurrenceOf (":", false, false);
+            const auto pitchText = token.fromFirstOccurrenceOf (":", false, false);
+            auto pitch = parseNoteName (pitchText);
+            if (! pitch && pitchText.isNotEmpty() && pitchText.containsOnly ("0123456789"))
+                pitch = pitchText.getIntValue();
+            if (! token.containsChar (':') || at.isEmpty() || ! at.containsOnly ("0123456789") || ! pitch)
+            {
+                error = "'" + token + "' is not a note: write position:pitch, like 48:A2";
+                return std::nullopt;
+            }
+            list.push_back ({ at.getIntValue(), *pitch });
+        }
+        if (list.empty())
+        {
+            error = "no notes given: write them as position:pitch, like \"0:A2 48:C3\"";
+            return std::nullopt;
+        }
+        return list;
+    }
+
+    /** Applies `change` to every listed note of the lane; an error names the first one missing. */
+    juce::String forListedNotes (std::vector<Note>& notes, const juce::String& listText,
+                                 const std::function<void (Note&)>& change)
+    {
+        juce::String error;
+        const auto list = parseNoteList (listText, error);
+        if (! list)
+            return error;
+        std::vector<size_t> found;
+        for (const auto& [at, pitch] : *list)
+        {
+            auto index = notes.size();
+            for (size_t i = 0; i < notes.size(); ++i)
+                if (notes[i].start == at && notes[i].pitch == pitch &&
+                    std::find (found.begin(), found.end(), i) == found.end())
+                {
+                    index = i;
+                    break;
+                }
+            if (index == notes.size())
+                return "there is no " + noteName (pitch) + " starting at tick " + juce::String (at);
+            found.push_back (index);
+        }
+        for (const auto i : found)
+            change (notes[i]);
+        return {};
     }
 
     juce::String noSuchNote (const CommandArgs& args)
@@ -390,7 +447,7 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
     add (
         registry, "pattern.step.note", "Set the pitch of a step (for a sampler, C4 is the sample's own pitch)",
         { stepParam,
-          { "note", Type::integer, Step::minNote, Step::maxNote, "MIDI note number" },
+          { "note", Type::integer, Step::minNote, Step::maxNote, "pitch: A2 or La2, or 45" },
           patternTarget,
           channelTarget },
         [&session] (const CommandArgs& args)
@@ -403,7 +460,8 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
     // --- notes (the piano roll; ticks, 24 per step) ------------------------------------------------
     constexpr auto lastTick = Pattern::maxSteps * Note::ticksPerStep;
     const CommandParam atParam { "at", Type::integer, 0, lastTick - 1, "position in ticks, 24 per step" };
-    const CommandParam pitchParam { "note", Type::integer, Step::minNote, Step::maxNote, "pitch: A2, C#3 or 45" };
+    const CommandParam pitchParam { "note", Type::integer, Step::minNote, Step::maxNote,
+                                    "pitch: A2 or La2, C#3 or Do#3, or 45" };
     const CommandParam lengthParam { "length", Type::integer, 1, lastTick, "length in ticks, 24 per step" };
 
     add (
@@ -413,6 +471,7 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
           lengthParam,
           { "accent", Type::boolean, 0, 1, "true or false", true },
           { "slide", Type::boolean, 0, 1, "true or false", true },
+          { "velocity", Type::integer, 0, 127, "loudness 0-127 (default 100)", true },
           patternTarget,
           channelTarget },
         [&session] (const CommandArgs& args)
@@ -423,7 +482,9 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
                                  notes.push_back ({ static_cast<int> (args["at"]), static_cast<int> (args["length"]),
                                                     static_cast<int> (args["note"]),
                                                     args.contains ("accent") && static_cast<bool> (args["accent"]),
-                                                    args.contains ("slide") && static_cast<bool> (args["slide"]) });
+                                                    args.contains ("slide") && static_cast<bool> (args["slide"]),
+                                                    args.contains ("velocity") ? static_cast<int> (args["velocity"])
+                                                                               : Note::defaultVelocity });
                                  return juce::String();
                              });
         },
@@ -499,6 +560,126 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
                                  });
             },
             true);
+
+    const CommandParam velocityParam { "velocity", Type::integer, 0, 127, "loudness 0-127, 100 = as it is" };
+    add (
+        registry, "note.velocity", "Set how loud a note is",
+        { atParam, pitchParam, velocityParam, patternTarget, channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editLane (session, args,
+                             [&args] (std::vector<Note>& notes)
+                             {
+                                 const auto it = findNote (notes, args);
+                                 if (it == notes.end())
+                                     return noSuchNote (args);
+                                 it->velocity = args["velocity"];
+                                 return juce::String();
+                             });
+        },
+        true);
+
+    // Several notes at once (a selection in the piano roll), listed as "48:A2 72:C3".
+    const CommandParam listParam { "notes", Type::text, 0, 0, "the notes, as position:pitch, e.g. \"0:A2 48:C3\"" };
+    add (
+        registry, "notes.move", "Move several notes together, in time (ticks) and pitch (semitones)",
+        { listParam,
+          { "by", Type::integer, -lastTick, lastTick, "ticks, negative = earlier" },
+          { "semitones", Type::integer, -72, 72, "negative = down" },
+          patternTarget,
+          channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editLane (
+                session, args,
+                [&args] (std::vector<Note>& notes)
+                {
+                    const int by = args["by"];
+                    const int semitones = args["semitones"];
+                    const auto error = forListedNotes (notes, args["notes"].toString(),
+                                                       [by, semitones] (Note& n)
+                                                       {
+                                                           n.start += by;
+                                                           n.pitch += semitones;
+                                                       });
+                    if (error.isNotEmpty())
+                        return error;
+                    for (const auto& n : notes)
+                        if (n.start < 0 || n.start >= lastTick || n.pitch < Step::minNote || n.pitch > Step::maxNote)
+                            return juce::String ("that move takes a note outside the pattern or the range C1-C7");
+                    return juce::String();
+                });
+        },
+        true);
+    add (
+        registry, "notes.remove", "Remove several notes", { listParam, patternTarget, channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editLane (session, args,
+                             [&args] (std::vector<Note>& notes)
+                             {
+                                 constexpr auto removed = -1;
+                                 const auto error = forListedNotes (notes, args["notes"].toString(),
+                                                                    [] (Note& n) { n.start = removed; });
+                                 std::erase_if (notes, [] (const Note& n) { return n.start == removed; });
+                                 return error;
+                             });
+        },
+        true);
+    add (
+        registry, "notes.velocity", "Set the loudness of several notes",
+        { listParam, velocityParam, patternTarget, channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editLane (session, args,
+                             [&args] (std::vector<Note>& notes)
+                             {
+                                 const int velocity = args["velocity"];
+                                 return forListedNotes (notes, args["notes"].toString(),
+                                                        [velocity] (Note& n) { n.velocity = velocity; });
+                             });
+        },
+        true);
+
+    add (
+        registry, "midi.import", "Put a melody from a MIDI file (.mid) into a lane, replacing its notes",
+        { { "path", Type::text, 0, 0, "path of a .mid file" },
+          { "track", Type::integer, 1, 128, "which track (default: the first with notes)", true },
+          patternTarget,
+          channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            const auto target = channelArg (session, args);
+            if (target.index < 0)
+                return CommandOutcome::fail (target.error);
+            const auto file =
+                juce::File::getCurrentWorkingDirectory().getChildFile (args["path"].toString().trim().unquoted());
+            io::MidiMelody melody;
+            const auto track = args.contains ("track") ? static_cast<int> (args["track"]) - 1 : -1;
+            if (const auto result = io::readMidiMelody (file, track, melody); result.failed())
+                return CommandOutcome::fail (result.getErrorMessage());
+
+            const auto patternIndex = patternArg (session, args);
+            auto& pattern = session.pattern (patternIndex);
+            const auto channel = target.index;
+            const auto notesBefore = pattern.lane (channel).notes();
+            const auto lengthBefore = pattern.getLength();
+            pattern.setLength (melody.lengthInSteps);
+            pattern.lane (channel).setNotes (melody.notes);
+
+            auto outcome = withTargets (CommandOutcome::ok (
+                                            [&session, patternIndex, channel, notesBefore, lengthBefore]
+                                            {
+                                                auto& p = session.pattern (patternIndex);
+                                                p.lane (channel).setNotes (notesBefore);
+                                                p.setLength (lengthBefore);
+                                            }),
+                                        args, patternIndex, channel);
+            outcome.resolvedArgs.set ("path", file.getFullPathName()); // redo must not depend on the folder
+            outcome.note = melody.summary();
+            return outcome;
+        },
+        true);
 
     // --- channels ---------------------------------------------------------------------------------
     add (

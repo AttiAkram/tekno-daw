@@ -17,6 +17,7 @@ add_library(tekno_core STATIC
     dsp/Sampler.cpp
     engine/AudioEngine.cpp
     engine/OfflineRender.cpp
+    io/MidiImport.cpp
     io/ProjectFile.cpp)
 add_library(tekno::core ALIAS tekno_core)
 

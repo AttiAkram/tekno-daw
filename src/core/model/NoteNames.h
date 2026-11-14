@@ -14,9 +14,21 @@
 
 namespace tekno::core
 {
-/** "A2" for MIDI 45: sharps, scientific octaves (middle C = C4 = 60). */
-juce::String noteName (int midiNote);
+/** How notes are named to people. The octave number is the same in both: middle C = C4 = Do4 = 60. */
+enum class NoteNaming
+{
+    letters, // C D E F G A B
+    latin,   // Do Re Mi Fa Sol La Si
+};
 
-/** Parses "A2", "c#3", "Db3", "Cb4"... Returns nothing for anything else. */
+/** The naming noteName() uses when not told otherwise: the user's preference. Files always use letters. */
+void setNoteNaming (NoteNaming naming) noexcept;
+NoteNaming getNoteNaming() noexcept;
+
+/** "A2" (or "La2") for MIDI 45: sharps, scientific octaves. */
+juce::String noteName (int midiNote);
+juce::String noteName (int midiNote, NoteNaming naming);
+
+/** Parses either system, any case: "A2", "c#3", "Db3", "La2", "sol#3", "Sib2". Nothing for anything else. */
 std::optional<int> parseNoteName (const juce::String& text);
 } // namespace tekno::core

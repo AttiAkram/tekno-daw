@@ -42,13 +42,14 @@ struct AudioStatus
     The view never changes the model directly: every edit is a command, and file dialogs go
     through ProjectActions. It reads the shared Session (atomics) on a timer, so what it shows is what
     the audio thread is playing. Edits name their target channel explicitly. */
-class PatternView final : public juce::Component, private juce::Timer
+class PatternView final : public juce::Component, public juce::FileDragAndDropTarget, private juce::Timer
 {
 public:
     PatternView (TeknoLookAndFeel& lookAndFeel, core::Session& session, core::CommandRegistry& commands,
                  ProjectActions& projectActions, std::function<AudioStatus()> audioStatus);
 
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
     void mouseMove (const juce::MouseEvent&) override;
@@ -56,6 +57,14 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+
+    // Dropping a .mid file imports its melody (midi.import): on a rack row into that channel,
+    // anywhere else into the selected one.
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void fileDragEnter (const juce::StringArray& files, int x, int y) override;
+    void fileDragMove (const juce::StringArray& files, int x, int y) override;
+    void fileDragExit (const juce::StringArray& files) override;
+    void filesDropped (const juce::StringArray& files, int x, int y) override;
 
     /** Opens the terminal and runs each line as if typed (used by --run). */
     void runInTerminal (const juce::StringArray& lines);
@@ -149,6 +158,8 @@ private:
     void startRename (int channel); // -1 = the pattern
     void finishRename (bool keep);
     void ensureChannelVisible (int channel);
+    int dropTargetAt (juce::Point<float> position) const;
+    void showStatus (const juce::String& text);
     void scrollRack (float delta);
     void layoutRack();
     void layoutKnobs();
@@ -187,6 +198,9 @@ private:
     std::array<juce::TextButton, 4> snapButtons;
     View view = View::pattern;
     int renamingChannel = -1; // which name the rename editor is changing; -1 = the pattern's
+    int dropChannel = -1;     // where a dragged file would go; -1 = no file over the window
+    juce::String status;      // a short message in place of the meta line, e.g. after an import
+    juce::uint32 statusUntil = 0;
 
     Snapshot shown;
     AudioStatus shownAudio;

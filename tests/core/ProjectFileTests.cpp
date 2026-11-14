@@ -148,7 +148,7 @@ TEST_CASE ("the file is readable and diffable", "[core][project]")
     CHECK (text.contains ("\"ticksPerStep\": 24"));
     CHECK (text.contains ("\"sampler\": { \"sample\": \"builtin:kick\""));
     CHECK (text.contains ("\"name\": \"acid 01\""));
-    CHECK (text.contains ("{ \"at\": 0, \"length\": 24, \"note\": \"A2\", \"accent\": true, \"slide\": false }"));
+    CHECK (text.contains ("{ \"at\": 0, \"length\": 24, \"note\": \"A2\", \"accent\": true, \"slide\": false, \"velocity\": 100 }"));
     // one note per line, and only patterns that hold something
     CHECK (juce::StringArray::fromLines (text).size() > 16);
     CHECK_FALSE (text.contains ("\"number\": 2"));

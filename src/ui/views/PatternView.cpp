@@ -353,6 +353,12 @@ void PatternView::timerCallback()
 {
     const auto now = takeSnapshot();
 
+    if (status.isNotEmpty() && juce::Time::getMillisecondCounter() >= statusUntil)
+    {
+        status.clear();
+        repaint (metaArea.toNearestInt());
+    }
+
     // Controls follow the session (changed by undo, opening a file, the terminal, later remote
     // clients), unless the user is holding them right now.
     const auto& channel = session.channel (now.selectedChannel);
@@ -664,6 +670,25 @@ void PatternView::paint (juce::Graphics& g)
     paintContent (g);
 }
 
+void PatternView::paintOverChildren (juce::Graphics& g)
+{
+    if (dropChannel < 0)
+        return;
+    // A file is being dragged over: say where it will go.
+    const float dashes[] { shape::dashLength, shape::dashGap };
+    const auto area = content.reduced (shape::lineWidth);
+    g.setColour (lnf.colour (&P::bg).withAlpha (0.85f));
+    g.fillRect (area);
+    g.setColour (lnf.colour (&P::ink));
+    juce::Path outline;
+    outline.addRoundedRectangle (area.reduced (space::gap), shape::fieldRadius);
+    juce::Path dashed;
+    juce::PathStrokeType (shape::lineWidth).createDashedStroke (dashed, outline, dashes, 2);
+    g.fillPath (dashed);
+    drawText (g, "drop to import the melody into " + shown.channelNames[static_cast<size_t> (dropChannel)],
+              type::sectionTitle, lnf.colour (&P::ink), area, juce::Justification::centred);
+}
+
 void PatternView::drawText (juce::Graphics& g, const juce::String& text, const tokens::TextStyle& style,
                             juce::Colour colour, juce::Rectangle<float> area, juce::Justification justification) const
 {
@@ -812,7 +837,10 @@ void PatternView::paintContent (juce::Graphics& g) const
         meta << "playing";
     else
         meta << "playing pattern " << (shown.playingPattern + 1) << ", this one starts at the next bar";
-    drawText (g, meta, type::meta, muted, metaArea);
+    if (status.isNotEmpty() && juce::Time::getMillisecondCounter() < statusUntil)
+        drawText (g, status, type::meta, ink, metaArea);
+    else
+        drawText (g, meta, type::meta, muted, metaArea);
     divider();
 
     // Pattern bank: filled = editing, outline ink = holds something, dot under = playing.
@@ -1263,6 +1291,72 @@ void PatternView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
     if (note >= core::Step::minNote && note <= core::Step::maxNote)
         run ("pattern.step.note", { { "step", hit.step + 1 }, { "note", note }, { "channel", hit.channel + 1 } });
     timerCallback();
+}
+
+// --- dropping MIDI files --------------------------------------------------------------------------
+
+namespace
+{
+    bool isMidiFile (const juce::String& path)
+    {
+        return path.endsWithIgnoreCase (".mid") || path.endsWithIgnoreCase (".midi");
+    }
+} // namespace
+
+bool PatternView::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    return std::any_of (files.begin(), files.end(), isMidiFile) && shown.channels > 0;
+}
+
+int PatternView::dropTargetAt (juce::Point<float> position) const
+{
+    const auto hit = rackAt (position);
+    return hit.channel >= 0 ? hit.channel : shown.selectedChannel;
+}
+
+void PatternView::fileDragEnter (const juce::StringArray&, int x, int y)
+{
+    dropChannel = dropTargetAt ({ static_cast<float> (x), static_cast<float> (y) });
+    repaint();
+}
+
+void PatternView::fileDragMove (const juce::StringArray& files, int x, int y)
+{
+    if (const auto target = dropTargetAt ({ static_cast<float> (x), static_cast<float> (y) }); target != dropChannel)
+        fileDragEnter (files, x, y);
+}
+
+void PatternView::fileDragExit (const juce::StringArray&)
+{
+    dropChannel = -1;
+    repaint();
+}
+
+void PatternView::filesDropped (const juce::StringArray& files, int x, int y)
+{
+    const auto channel = dropTargetAt ({ static_cast<float> (x), static_cast<float> (y) });
+    dropChannel = -1;
+    const auto* file = std::find_if (files.begin(), files.end(), isMidiFile);
+    if (file == files.end())
+        return;
+
+    const auto outcome = commands.execute ("midi.import", { { "path", *file }, { "channel", channel + 1 } });
+    if (! outcome.succeeded())
+    {
+        showStatus ("could not import: " + outcome.error);
+        return;
+    }
+    run ("channel.select", { { "channel", channel + 1 } });
+    run ("ui.view", { { "view", "pianoroll" } });
+    showStatus (shown.channelNames[static_cast<size_t> (channel)] + ": " + outcome.note);
+    timerCallback();
+}
+
+void PatternView::showStatus (const juce::String& text)
+{
+    status = text;
+    statusUntil = juce::Time::getMillisecondCounter() + 8000;
+    repaint();
 }
 
 bool PatternView::keyPressed (const juce::KeyPress& key)

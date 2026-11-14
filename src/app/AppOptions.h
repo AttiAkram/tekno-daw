@@ -19,18 +19,18 @@ namespace tekno::app
 /** Command-line options. Most exist so that the app can be driven by scripts and CI. */
 struct AppOptions
 {
-    bool printVersion = false;                          // --version          print one line and exit
-    bool printHelp = false;                             // --help
-    bool smokeTest = false;                             // --smoke-test       open the window, quit after a second
-    juce::File snapshot;                                // --snapshot=<png>   render the main window to a PNG and quit
-    juce::File render;                                  // --render=<wav>     render the pattern, no window/device
-    int bars = 4;                                       // --bars=<1..64>     length of --render
-    bool noAudio = false;                               // --no-audio         don't open an audio device
-    juce::File project;                                 // <file.tekno>       open this project at start
-    juce::StringArray run;                              // --run="a; b"       terminal commands to run at start
-    juce::String view;                                  // --view=mixer       the view to start on
-    ui::tokens::Theme theme = ui::tokens::defaultTheme; // --theme=dark|light
-    juce::StringArray errors;                           // unknown or malformed arguments
+    bool printVersion = false;              // --version          print one line and exit
+    bool printHelp = false;                 // --help
+    bool smokeTest = false;                 // --smoke-test       open the window, quit after a second
+    juce::File snapshot;                    // --snapshot=<png>   render the main window to a PNG and quit
+    juce::File render;                      // --render=<wav>     render the pattern, no window/device
+    int bars = 4;                           // --bars=<1..64>     length of --render
+    bool noAudio = false;                   // --no-audio         don't open an audio device
+    juce::File project;                     // <file.tekno>       open this project at start
+    juce::StringArray run;                  // --run="a; b"       terminal commands to run at start
+    juce::String view;                      // --view=mixer       the view to start on
+    std::optional<ui::tokens::Theme> theme; // --theme=dark|light, else the saved preference
+    juce::StringArray errors;               // unknown or malformed arguments
 
     static AppOptions parse (const juce::StringArray& arguments);
     static juce::String helpText();

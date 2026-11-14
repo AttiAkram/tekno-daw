@@ -142,9 +142,20 @@ help bpm                what a command takes; help alone lists them all
 
 The piano roll (F7) shows the selected channel's notes, with the other channels' notes in grey behind
 them. Click to add a note, drag to move it, drag its right edge to change its length, right-click to
-delete it, Shift+click for accent, Ctrl+click for slide. Notes snap to the step, to 1/32, to 1/16
+delete it, Shift+click for accent, Ctrl+click for slide. Hold and drag on empty space to select several
+notes (Shift adds to the selection), drag one of them to move them all, Delete removes them, Ctrl+A
+selects everything. The lane at the bottom shows each note's **velocity** (0-127, 100 = as it is):
+drag a bar up or down, and with several notes selected it sets them all. Notes snap to the step, to 1/32, to 1/16
 triplets, or nowhere (`ui.snap step|1/32|1/3|free`). The step sequencer and the piano roll edit the same
 notes; a row whose notes are off the grid shows them in miniature, and a click opens the piano roll.
+
+**Help for people who don't read letter names.** `ui.notes latin` names notes Do Re Mi everywhere
+(`ui.notes letters` goes back to C D E); the terminal understands both (`note 3 La2`). Octaves are the
+same in both: C4 = Do4, middle C. **Import a melody** by dragging a MIDI file (`.mid`) onto the window: on
+a channel's row it goes into that channel, anywhere else into the selected one, and the piano roll opens.
+The same from the terminal: `midi.import song.mid track=2`. Timing is kept as it is, up to 4 bars.
+
+Your settings (note names, snap, theme) are kept in `~/.config/tekno-daw/settings.xml`.
 
 The mixer view (F9) has a strip per channel — fader, pan, mute, solo, a level meter with a peak line and
 a clip light (click it to reset) — and the master. A whole fader drag is one undo step.

@@ -9,6 +9,7 @@
 // Lanes hold notes; the step sequencer is a view of them. These pin the conversion both ways, the
 // engine's handling of notes off the grid, and the v3 file.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "TestSessions.h"
@@ -198,7 +199,7 @@ TEST_CASE ("version 3 files check their notes", "[core][project][notes]")
     Session s;
     REQUIRE (s.pattern (0).lane (4).setNotes ({ Note { 7, 13, 50, true, false } }));
     const auto text = tekno::core::io::project::toText (s);
-    CHECK (text.contains ("{ \"at\": 7, \"length\": 13, \"note\": \"D3\", \"accent\": true, \"slide\": false }"));
+    CHECK (text.contains ("{ \"at\": 7, \"length\": 13, \"note\": \"D3\", \"accent\": true, \"slide\": false, \"velocity\": 100 }"));
 
     Session reopened;
     REQUIRE (tekno::core::io::project::fromText (text, reopened).wasOk());
@@ -293,4 +294,75 @@ TEST_CASE ("the step view and the notes stay the same data", "[core][commands][n
     CHECK_FALSE (has (f.session.pattern (0).lane (0).notes(), Note { 48, 24, 48 }));
     REQUIRE (f.line ("tie 2 on").isEmpty()); // a tie in the step view is a longer note
     CHECK (has (f.acid(), Note { 0, 48, 45, true, false }));
+}
+
+// --- velocity and several notes at once ------------------------------------------------------------
+
+TEST_CASE ("velocity survives the step view, the file and the packing", "[core][notes][velocity]")
+{
+    CHECK (Note::unpack (Note { 0, 24, 45, false, false, 37 }.pack()).velocity == 37);
+    CHECK (Step::unpack (Step { true, false, false, 45, false, 99 }.pack()).velocity == 99);
+
+    Pattern pattern;
+    REQUIRE (pattern.lane (0).setNotes ({ Note { 0, 48, 45, false, false, 64 } }));
+    pattern.setStep (0, 4, Step { true, false, false, 50 }); // another step: the long note keeps its velocity
+    CHECK (pattern.lane (0).notes()[0].velocity == 64);
+    CHECK (pattern.getStep (0, 1).velocity == 64); // a tie shows its note's velocity
+
+    Session s;
+    REQUIRE (s.pattern (0).lane (4).setNotes ({ Note { 0, 24, 45, true, false, 12 } }));
+    const auto text = tekno::core::io::project::toText (s);
+    CHECK (text.contains ("\"velocity\": 12"));
+    Session reopened;
+    REQUIRE (tekno::core::io::project::fromText (text, reopened).wasOk());
+    CHECK (reopened.pattern (0).lane (4).notes()[0].velocity == 12);
+    // A file without velocities (written before they existed) reads as 100: nothing changes.
+    REQUIRE (tekno::core::io::project::fromText (text.replace (", \"velocity\": 12", ""), reopened).wasOk());
+    CHECK (reopened.pattern (0).lane (4).notes()[0].velocity == Note::defaultVelocity);
+}
+
+TEST_CASE ("velocity is loudness: 100 changes nothing, 50 is half", "[core][engine][velocity]")
+{
+    auto peakWith = [] (int velocity)
+    {
+        Session session;
+        while (session.channelCount() > 1)
+            session.removeChannel (1); // the kick alone: a one-shot, the same every time
+        REQUIRE (
+            session.pattern (0).lane (0).setNotes ({ Note { 0, tps, Step::samplerRootNote, false, false, velocity } }));
+        session.transport.playing = true;
+        const auto out = render (session, 6000);
+        float peak = 0.0f;
+        for (auto v : out)
+            peak = std::max (peak, std::abs (v));
+        return peak;
+    };
+    const auto unity = peakWith (100);
+    CHECK (peakWith (50) == Catch::Approx (unity * 0.5f).epsilon (0.001));
+    CHECK (peakWith (127) == Catch::Approx (unity * 1.27f).epsilon (0.001));
+    CHECK (peakWith (0) == 0.0f);
+    CHECK (Note::velocityGain (100) == 1.0f); // exactly: old projects sound bit for bit the same
+}
+
+TEST_CASE ("several notes move, change and go together, as one undo step", "[core][commands][velocity]")
+{
+    Commands f;
+    const auto before = f.acid();
+
+    CHECK (f.line ("notes.move \"0:A2 48:A3\" by=12 semitones=2").isEmpty());
+    CHECK (has (f.acid(), Note { 12, 24, 47, true, false }));
+    CHECK (has (f.acid(), Note { 60, 24, 59, false, true }));
+    f.registry.undo();
+    CHECK (f.acid() == before);
+
+    CHECK (f.line ("notes.velocity \"0:La2, 96:Do3\" 40").isEmpty()); // names in either system, commas fine
+    CHECK (f.acid()[0].velocity == 40);
+    CHECK (f.line ("note.velocity 48 A3 127").isEmpty());
+    CHECK (f.line ("notes.remove \"0:A2 48:A3\"").isEmpty());
+    CHECK (f.acid().size() == before.size() - 2);
+
+    CHECK (f.line ("notes.move \"0:C2\" by=1 semitones=0").contains ("there is no C2 starting at tick 0"));
+    CHECK (f.line ("notes.move \"96:C3\" by=-200 semitones=0").contains ("outside the pattern"));
+    CHECK (f.line ("notes.remove \"hello\"").contains ("position:pitch"));
+    CHECK (f.line ("note.add 0 C3 24 velocity=200").contains ("between"));
 }

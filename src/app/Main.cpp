@@ -18,6 +18,7 @@
 #include "core/engine/AudioEngine.h"
 #include "core/engine/OfflineRender.h"
 #include "core/model/Session.h"
+#include "ui/Preferences.h"
 #include "ui/ProjectActions.h"
 #include "ui/theme/TeknoLookAndFeel.h"
 #include "ui/views/PatternView.h"
@@ -86,7 +87,9 @@ public:
 
         projectActions = std::make_unique<ui::ProjectActions> (session, commands);
 
-        lookAndFeel = std::make_unique<ui::TeknoLookAndFeel> (options.theme);
+        preferences = std::make_unique<ui::Preferences>();
+        core::setNoteNaming (preferences->noteNaming());
+        lookAndFeel = std::make_unique<ui::TeknoLookAndFeel> (options.theme.value_or (preferences->theme()));
         juce::LookAndFeel::setDefaultLookAndFeel (lookAndFeel.get());
         registerUiCommands();
 
@@ -100,6 +103,8 @@ public:
         auto* viewPtr = view.get();
         mainView = viewPtr;
         mainWindow = std::make_unique<MainWindow> (getApplicationName(), *lookAndFeel, std::move (view));
+        if (const auto snap = ui::PianoRollView::snapFromName (preferences->snap()))
+            mainView->setSnap (*snap);
 
         if (options.view.isNotEmpty())
             if (const auto outcome = commands.execute ("ui.view", { { "view", options.view } }); ! outcome.succeeded())
@@ -130,6 +135,7 @@ public:
         mainView = nullptr;
         mainWindow.reset();
         projectActions.reset();
+        preferences.reset();
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
         lookAndFeel.reset();
     }
@@ -193,6 +199,7 @@ private:
                         {
                             using ui::tokens::Theme;
                             lookAndFeel->setTheme (lookAndFeel->getTheme() == Theme::dark ? Theme::light : Theme::dark);
+                            preferences->setTheme (lookAndFeel->getTheme());
                             if (mainWindow != nullptr)
                                 mainWindow->sendLookAndFeelChange();
                             return core::CommandOutcome::ok();
@@ -209,6 +216,23 @@ private:
                                                                    "': use step, 1/32, 1/3 or free");
                             if (mainView != nullptr)
                                 mainView->setSnap (*snap);
+                            preferences->setSnap (ui::PianoRollView::snapName (*snap));
+                            return core::CommandOutcome::ok();
+                        } });
+        commands.add ({ "ui.notes",
+                        "Name notes with letters (C D E) or as in Italy (Do Re Mi). Same octaves: C4 = Do4",
+                        { { "names", core::CommandParam::Type::text, 0, 0, "letters or latin (abc, doremi)" } },
+                        [this] (const core::CommandArgs& args)
+                        {
+                            const auto name = args["names"].toString();
+                            const auto naming = ui::Preferences::namingFromName (name);
+                            if (! naming)
+                                return core::CommandOutcome::fail ("unknown note names '" + name.trim() +
+                                                                   "': use letters (C D E) or latin (Do Re Mi)");
+                            core::setNoteNaming (*naming);
+                            preferences->setNoteNaming (*naming);
+                            if (mainWindow != nullptr)
+                                mainWindow->repaint();
                             return core::CommandOutcome::ok();
                         } });
         commands.add ({ "ui.view",
@@ -264,6 +288,7 @@ private:
     std::unique_ptr<ui::ProjectActions> projectActions;
     std::unique_ptr<ui::TeknoLookAndFeel> lookAndFeel;
     std::unique_ptr<MainWindow> mainWindow;
+    std::unique_ptr<ui::Preferences> preferences;
     ui::PatternView* mainView = nullptr; // owned by mainWindow; the target of ui.view
 };
 } // namespace tekno::app

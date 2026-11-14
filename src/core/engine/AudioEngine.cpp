@@ -69,7 +69,9 @@ void AudioEngine::prepare (double newSampleRate) noexcept
         p.generation = ~0u; // force a full sync on the first block
         p.resetPlayback();
         p.gainLeft = p.gainRight = 0.0f;
+        p.acidGain = p.acidGainTarget = 1.0f;
     }
+    velocityGlide = static_cast<float> (1.0 - std::exp (-1.0 / (0.002 * sampleRate)));
     wasPlaying = false;
     step = -1;
     stepCounter = 0;
@@ -196,7 +198,11 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
             auto& p = players[slot];
             float l = 0.0f, r = 0.0f;
             if (p.kind == InstrumentKind::acid)
-                l = r = p.acid.process();
+            {
+                // Velocity 100 everywhere keeps this exactly 1: old projects sound bit for bit the same.
+                p.acidGain += (p.acidGainTarget - p.acidGain) * velocityGlide;
+                l = r = p.acid.process() * p.acidGain;
+            }
             else
                 p.sampler.process (l, r);
 
@@ -305,7 +311,7 @@ void AudioEngine::play (ChannelPlayer& player, int channel, const Note& note) no
 {
     if (player.kind == InstrumentKind::sampler)
     {
-        player.sampler.trigger (note.pitch, note.accent);
+        player.sampler.trigger (note.pitch, note.accent, Note::velocityGain (note.velocity));
         return;
     }
 
@@ -317,6 +323,7 @@ void AudioEngine::play (ChannelPlayer& player, int channel, const Note& note) no
         voice.noteOn (note.pitch, note.accent);
     player.lastNote = note;
     player.hasLastNote = true;
+    player.acidGainTarget = Note::velocityGain (note.velocity);
 
     // Slide into a note that starts where this one ends: the gate stays open until it arrives.
     if (note.slide && noteStartsAt (channel, note.end()))
