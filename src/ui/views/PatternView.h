@@ -22,6 +22,7 @@
 #include "ui/components/ValueChip.h"
 #include "ui/theme/TeknoLookAndFeel.h"
 #include "ui/views/MixerView.h"
+#include "ui/views/PianoRollView.h"
 
 namespace tekno::ui
 {
@@ -63,9 +64,11 @@ public:
     enum class View
     {
         pattern,
+        pianoRoll,
         mixer,
     };
     void showView (View view);
+    void setSnap (PianoRollView::Snap snap);
     View currentView() const noexcept { return view; }
     static std::optional<View> viewFromName (const juce::String& name);
 
@@ -112,6 +115,8 @@ private:
         float swing = 0.0f;
         bool square = false;
         juce::String patternName, documentTitle;
+        std::uint32_t freeLanes = 0; // a bit per channel whose notes the steps can't show (off the grid)
+        std::array<std::vector<core::Note>, maxChannels> freeNotes; // those lanes' notes, for the miniature
 
         bool operator== (const Snapshot&) const = default;
         bool isSampler (int channel) const noexcept { return ((samplers >> channel) & 1u) != 0; }
@@ -178,6 +183,8 @@ private:
     bool terminalOpen = false;
     LevelMeters meters;
     MixerView mixer;
+    PianoRollView pianoRoll;
+    std::array<juce::TextButton, 4> snapButtons;
     View view = View::pattern;
     int renamingChannel = -1; // which name the rename editor is changing; -1 = the pattern's
 

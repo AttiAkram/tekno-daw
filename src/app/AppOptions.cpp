@@ -60,7 +60,7 @@ juce::String AppOptions::helpText()
            "  --snapshot=<file>    render the main window to a PNG and exit\n"
            "  --render=<file.wav>  render the pattern to a WAV (no window, no audio device) and exit\n"
            "  --bars=<n>           how many bars --render writes (default 4)\n"
-           "  --view=pattern|mixer start on this view\n"
+           "  --view=<view>        start on this view: pattern, pianoroll or mixer\n"
            "  --no-audio           start without opening an audio device\n"
            "  --run=\"cmd; cmd\"     open the terminal and run these commands at start\n"
            "  --smoke-test         open the window, quit after one second (used by tests)\n"

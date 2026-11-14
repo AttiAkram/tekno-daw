@@ -83,7 +83,7 @@ namespace
         case Type::integer:
         case Type::number:
         {
-            if (param.name == "note")
+            if (param.name == "note" || param.name.endsWith ("Note")) // "A2", "C#3" as well as 45
                 if (const auto note = parseNoteName (text))
                     return juce::var (*note);
 

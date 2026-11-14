@@ -8,10 +8,12 @@
 
 #include "core/commands/SessionCommands.h"
 
+#include <algorithm>
 #include <array>
 #include <optional>
 
 #include "core/io/ProjectFile.h"
+#include "core/model/NoteNames.h"
 
 namespace tekno::core
 {
@@ -110,6 +112,44 @@ namespace
         return withTargets (CommandOutcome::ok ([&session, patternIndex, channel, before]
                                                 { session.pattern (patternIndex).lane (channel).setNotes (before); }),
                             args, patternIndex, channel);
+    }
+
+    /** Changes the notes of one lane; `change` returns an error or an empty string. Undo puts the lane back. */
+    CommandOutcome editLane (Session& session, const CommandArgs& args,
+                             const std::function<juce::String (std::vector<Note>&)>& change)
+    {
+        const auto target = channelArg (session, args);
+        if (target.index < 0)
+            return CommandOutcome::fail (target.error);
+        const auto patternIndex = patternArg (session, args);
+        const auto channel = target.index;
+        auto& lane = session.pattern (patternIndex).lane (channel);
+
+        const auto before = lane.notes();
+        auto after = before;
+        if (const auto error = change (after); error.isNotEmpty())
+            return CommandOutcome::fail (error);
+        std::sort (after.begin(), after.end(), earlier);
+        if (! lane.setNotes (after))
+            return CommandOutcome::fail ("a lane holds at most " + juce::String (Lane::maxNotes) + " notes");
+        return withTargets (CommandOutcome::ok ([&session, patternIndex, channel, before]
+                                                { session.pattern (patternIndex).lane (channel).setNotes (before); }),
+                            args, patternIndex, channel);
+    }
+
+    /** The note at `at` with pitch `note` (the first one, if two are identical), or end(). */
+    std::vector<Note>::iterator findNote (std::vector<Note>& notes, const CommandArgs& args)
+    {
+        const int at = args["at"];
+        const int pitch = args["note"];
+        return std::find_if (notes.begin(), notes.end(),
+                             [at, pitch] (const Note& n) { return n.start == at && n.pitch == pitch; });
+    }
+
+    juce::String noSuchNote (const CommandArgs& args)
+    {
+        return "there is no " + noteName (static_cast<int> (args["note"])) + " starting at tick " +
+               juce::String (static_cast<int> (args["at"]));
     }
 
     /** Sets an atomic and returns how to put the old value back. */
@@ -359,6 +399,106 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
             return editStep (session, args, [note] (Step& s) { s.note = note; }, true);
         },
         true);
+
+    // --- notes (the piano roll; ticks, 24 per step) ------------------------------------------------
+    constexpr auto lastTick = Pattern::maxSteps * Note::ticksPerStep;
+    const CommandParam atParam { "at", Type::integer, 0, lastTick - 1, "position in ticks, 24 per step" };
+    const CommandParam pitchParam { "note", Type::integer, Step::minNote, Step::maxNote, "pitch: A2, C#3 or 45" };
+    const CommandParam lengthParam { "length", Type::integer, 1, lastTick, "length in ticks, 24 per step" };
+
+    add (
+        registry, "note.add", "Add a note to a lane",
+        { atParam,
+          pitchParam,
+          lengthParam,
+          { "accent", Type::boolean, 0, 1, "true or false", true },
+          { "slide", Type::boolean, 0, 1, "true or false", true },
+          patternTarget,
+          channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editLane (session, args,
+                             [&args] (std::vector<Note>& notes)
+                             {
+                                 notes.push_back ({ static_cast<int> (args["at"]), static_cast<int> (args["length"]),
+                                                    static_cast<int> (args["note"]),
+                                                    args.contains ("accent") && static_cast<bool> (args["accent"]),
+                                                    args.contains ("slide") && static_cast<bool> (args["slide"]) });
+                                 return juce::String();
+                             });
+        },
+        true);
+    add (
+        registry, "note.remove", "Remove a note", { atParam, pitchParam, patternTarget, channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editLane (session, args,
+                             [&args] (std::vector<Note>& notes)
+                             {
+                                 const auto it = findNote (notes, args);
+                                 if (it == notes.end())
+                                     return noSuchNote (args);
+                                 notes.erase (it);
+                                 return juce::String();
+                             });
+        },
+        true);
+    add (
+        registry, "note.move", "Move a note in time and pitch",
+        { atParam,
+          pitchParam,
+          { "toAt", Type::integer, 0, lastTick - 1, "new position in ticks" },
+          { "toNote", Type::integer, Step::minNote, Step::maxNote, "new pitch" },
+          patternTarget,
+          channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editLane (session, args,
+                             [&args] (std::vector<Note>& notes)
+                             {
+                                 const auto it = findNote (notes, args);
+                                 if (it == notes.end())
+                                     return noSuchNote (args);
+                                 it->start = args["toAt"];
+                                 it->pitch = args["toNote"];
+                                 return juce::String();
+                             });
+        },
+        true);
+    add (
+        registry, "note.resize", "Change how long a note is",
+        { atParam, pitchParam, lengthParam, patternTarget, channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editLane (session, args,
+                             [&args] (std::vector<Note>& notes)
+                             {
+                                 const auto it = findNote (notes, args);
+                                 if (it == notes.end())
+                                     return noSuchNote (args);
+                                 it->length = args["length"];
+                                 return juce::String();
+                             });
+        },
+        true);
+    for (const auto isAccent : { true, false })
+        add (
+            registry, isAccent ? "note.accent" : "note.slide",
+            isAccent ? "Set a note's accent" : "Set a note's slide into the next one",
+            { atParam, pitchParam, onParam, patternTarget, channelTarget },
+            [&session, isAccent] (const CommandArgs& args)
+            {
+                return editLane (session, args,
+                                 [&args, isAccent] (std::vector<Note>& notes)
+                                 {
+                                     const auto it = findNote (notes, args);
+                                     if (it == notes.end())
+                                         return noSuchNote (args);
+                                     (isAccent ? it->accent : it->slide) = static_cast<bool> (args["on"]);
+                                     return juce::String();
+                                 });
+            },
+            true);
 
     // --- channels ---------------------------------------------------------------------------------
     add (

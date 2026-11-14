@@ -211,3 +211,86 @@ TEST_CASE ("version 3 files check their notes", "[core][project][notes]")
                .getErrorMessage()
                .contains ("ticksPerStep"));
 }
+
+// --- note commands (the piano roll's and the terminal's) ------------------------------------------
+
+#include "core/commands/CommandLine.h"
+#include "core/commands/SessionCommands.h"
+
+namespace
+{
+struct Commands
+{
+    Session session;
+    CommandRegistry registry;
+    Commands() { registerSessionCommands (registry, session); }
+
+    juce::String line (const juce::String& text)
+    {
+        const auto parsed = CommandLine::parse (text, registry);
+        if (! parsed.command)
+            return parsed.error;
+        return registry.execute (parsed.command->id, parsed.command->args).error;
+    }
+    std::vector<Note> acid() const { return session.pattern (0).lane (4).notes(); }
+};
+
+bool has (const std::vector<Note>& notes, const Note& n)
+{
+    return std::find (notes.begin(), notes.end(), n) != notes.end();
+}
+} // namespace
+
+TEST_CASE ("notes can be added, moved, resized, flagged and removed by name", "[core][commands][notes]")
+{
+    Commands f; // the acid (channel 5) is selected
+    const auto before = f.acid();
+
+    CHECK (f.line ("note.add 344 E3 16").isEmpty()); // a triplet 1/16 near the end
+    CHECK (has (f.acid(), Note { 344, 16, 52 }));
+    CHECK (f.line ("note.move 344 E3 toAt=336 toNote=G3").isEmpty());
+    CHECK (has (f.acid(), Note { 336, 16, 55 }));
+    CHECK (f.line ("note.resize 336 G3 30").isEmpty());
+    CHECK (f.line ("note.accent 336 G3 on").isEmpty());
+    CHECK (f.line ("note.slide 336 G3 on").isEmpty());
+    CHECK (has (f.acid(), Note { 336, 30, 55, true, true }));
+    CHECK (f.line ("note.remove 336 G3").isEmpty());
+    CHECK (f.acid() == before);
+
+    CHECK (f.line ("note.remove 7 C2").contains ("there is no C2 starting at tick 7"));
+    CHECK (f.line ("note.add 2000 C2 24").contains ("between"));
+    CHECK (f.line ("note.add 0 C4 24 channel=1").isEmpty()); // another lane, named
+    CHECK (f.session.pattern (0).lane (0).notes().size() == 5);
+}
+
+TEST_CASE ("each note edit is one undo step, and redo comes back to the same lane", "[core][commands][notes]")
+{
+    Commands f;
+    const auto before = f.acid();
+    REQUIRE (f.line ("note.add 12 C3 12").isEmpty());
+    REQUIRE (f.line ("note.move 12 C3 toAt=36 toNote=D3").isEmpty());
+    const auto after = f.acid();
+
+    f.registry.undo();
+    CHECK (has (f.acid(), Note { 12, 12, 48 }));
+    f.registry.undo();
+    CHECK (f.acid() == before);
+
+    f.line ("ch 1"); // redo must not land on the newly selected channel
+    f.registry.redo();
+    f.registry.redo();
+    CHECK (f.acid() == after);
+    CHECK (f.session.pattern (0).lane (0).notes().size() == 4);
+}
+
+TEST_CASE ("the step view and the notes stay the same data", "[core][commands][notes]")
+{
+    // The done criterion of M3, in small: a note made in the piano roll is a step, and back.
+    Commands f;
+    REQUIRE (f.line ("note.add 48 C3 24 channel=1").isEmpty()); // step 3 of the kick lane
+    CHECK (f.session.pattern (0).getStep (0, 2) == Step { true, false, false, 48 });
+    REQUIRE (f.line ("toggle 3 channel=1").isEmpty()); // off again from the step sequencer
+    CHECK_FALSE (has (f.session.pattern (0).lane (0).notes(), Note { 48, 24, 48 }));
+    REQUIRE (f.line ("tie 2 on").isEmpty()); // a tie in the step view is a longer note
+    CHECK (has (f.acid(), Note { 0, 48, 45, true, false }));
+}

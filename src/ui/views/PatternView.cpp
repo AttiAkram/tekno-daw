@@ -181,6 +181,7 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
     , terminal (teknoLookAndFeel, registry)
     , meters (sessionToShow)
     , mixer (teknoLookAndFeel, sessionToShow, registry, meters)
+    , pianoRoll (teknoLookAndFeel, sessionToShow, registry)
 {
     setWantsKeyboardFocus (true);
 
@@ -191,12 +192,27 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
         button.setButtonText (views[i]);
         setRole (button, Role::nav);
         button.setMouseClickGrabsKeyboardFocus (false);
-        button.setEnabled (i == 0 || i == 2); // piano roll arrives later in M3, song in M6
+        button.setEnabled (i < 3); // the song view arrives in M6
         addAndMakeVisible (button);
     }
     navButtons[0].setToggleState (true, juce::dontSendNotification);
     navButtons[0].onClick = [this] { run ("ui.view", { { "view", "pattern" } }); };
+    navButtons[1].onClick = [this] { run ("ui.view", { { "view", "pianoroll" } }); };
     navButtons[2].onClick = [this] { run ("ui.view", { { "view", "mixer" } }); };
+
+    addChildComponent (pianoRoll);
+    using Snap = PianoRollView::Snap;
+    const std::array<Snap, 4> snaps { Snap::step, Snap::thirtySecond, Snap::triplet, Snap::free };
+    for (size_t i = 0; i < snapButtons.size(); ++i)
+    {
+        auto& button = snapButtons[i];
+        button.setButtonText (PianoRollView::snapName (snaps[i]));
+        setRole (button, Role::nav);
+        button.setMouseClickGrabsKeyboardFocus (false);
+        button.onClick = [this, name = PianoRollView::snapName (snaps[i])] { run ("ui.snap", { { "snap", name } }); };
+        addChildComponent (button);
+    }
+    snapButtons[0].setToggleState (true, juce::dontSendNotification);
 
     addChildComponent (mixer);
     meters.onChange = [this]
@@ -295,7 +311,13 @@ PatternView::Snapshot PatternView::takeSnapshot() const
     for (int c = 0; c < s.channels; ++c)
     {
         const auto slot = static_cast<size_t> (c);
-        const auto laneSteps = core::steps::fromNotes (pattern.lane (c).notes(), pattern.getLength());
+        const auto laneNotes = pattern.lane (c).notes();
+        if (! core::steps::representable (laneNotes))
+        {
+            s.freeLanes |= 1u << c;
+            s.freeNotes[slot] = laneNotes;
+        }
+        const auto laneSteps = core::steps::fromNotes (laneNotes, pattern.getLength());
         for (int i = 0; i < Pattern::maxSteps; ++i)
             s.steps[slot][static_cast<size_t> (i)] = laneSteps[static_cast<size_t> (i)].pack();
         s.channelNames[slot] = session.project.channelNames[slot];
@@ -469,16 +491,35 @@ void PatternView::resized()
     // The mixer takes everything under the divider; the pattern bank and rack belong to the pattern view.
     mixer.setBounds (patternBarArea.getUnion (gridArea).toNearestInt());
     mixer.setVisible (view == View::mixer);
-    lengthChip.setVisible (view == View::pattern);
+    pianoRoll.setBounds (gridArea.toNearestInt());
+    pianoRoll.setVisible (view == View::pianoRoll);
+    lengthChip.setVisible (view != View::mixer);
+
+    // Snap choices, left of the length chip, only where they matter.
+    auto snapArea = patternBarArea.withRight (lengthChip.getX() - space::gap);
+    for (auto it = snapButtons.rbegin(); it != snapButtons.rend(); ++it)
+    {
+        it->setBounds (snapArea.removeFromRight (56.0f).toNearestInt());
+        it->setVisible (view == View::pianoRoll);
+    }
 
     layoutKnobs();
     layoutRack();
+}
+
+void PatternView::setSnap (PianoRollView::Snap snap)
+{
+    pianoRoll.setSnap (snap);
+    for (auto& button : snapButtons)
+        button.setToggleState (button.getButtonText() == PianoRollView::snapName (snap), juce::dontSendNotification);
 }
 
 std::optional<PatternView::View> PatternView::viewFromName (const juce::String& name)
 {
     if (name == "pattern" || name == "rack" || name == "channels")
         return View::pattern;
+    if (name == "pianoroll" || name == "piano" || name == "roll")
+        return View::pianoRoll;
     if (name == "mixer")
         return View::mixer;
     return std::nullopt;
@@ -491,6 +532,7 @@ void PatternView::showView (View newView)
     finishRename (false);
     view = newView;
     navButtons[0].setToggleState (view == View::pattern, juce::dontSendNotification);
+    navButtons[1].setToggleState (view == View::pianoRoll, juce::dontSendNotification);
     navButtons[2].setToggleState (view == View::mixer, juce::dontSendNotification);
     resized();
     repaint();
@@ -596,7 +638,7 @@ void PatternView::layoutRack()
     // Rows that don't fit scroll: rackScroll moves them up, painting clips them to rackArea.
     rackContentHeight = 0.0f;
     for (int c = 0; c < shown.channels; ++c)
-        rackContentHeight += rowTop + stepSize + rowBottom (shown.isSampler (c)) + space::unit;
+        rackContentHeight += rowTop + stepSize + rowBottom (shown.isSampler (c)) + (c > 0 ? space::unit : 0.0f);
     rackScroll = std::clamp (rackScroll, 0.0f, std::max (0.0f, rackContentHeight - g.getHeight()));
 
     auto y = g.getY() - rackScroll;
@@ -691,7 +733,7 @@ void PatternView::paintLeftColumn (juce::Graphics& g) const
         { "Shift Ctrl Alt", "accent, slide, tie" },
         { "Wheel", "pitch" },
         { "Up / Down", "channel" },
-        { "F6 / F9", "pattern / mixer" },
+        { "F6 F7 F9", "steps, roll, mixer" },
         { "PgUp / PgDn", "pattern" },
         { "[  ]", "bar of the pattern" },
         { "Ctrl+Z / Y", "undo / redo" },
@@ -762,6 +804,8 @@ void PatternView::paintContent (juce::Graphics& g) const
 
     auto meta = "Pattern " + juce::String (shown.selected + 1) + " of " + juce::String (Session::maxPatterns) +
                 "  /  " + formatBpm (shown.bpm) + "  /  " + formatSwing (shown.swing) + "  /  ";
+    if (view == View::pianoRoll && shown.channels > 0)
+        meta << shown.channelNames[static_cast<size_t> (shown.selectedChannel)] << "  /  ";
     if (! shown.playing)
         meta << "stopped";
     else if (shown.playingPattern == shown.selected)
@@ -796,6 +840,9 @@ void PatternView::paintContent (juce::Graphics& g) const
             g.fillEllipse (box.getCentreX() - d * 0.5f, box.getBottom() + 3.0f, d, d);
         }
     }
+
+    if (view == View::pianoRoll)
+        return; // the PianoRollView component draws the rest
 
     // Above the rack: which bar is shown (when there is more than one), beat numbers, the playhead.
     const auto pages = (shown.length + stepsPerPage - 1) / stepsPerPage;
@@ -875,6 +922,40 @@ void PatternView::paintRow (juce::Graphics& g, int channel) const
     };
     toggle (row.mute, isMuted, "M");
     toggle (row.solo, isSoloed, "S");
+
+    if (((shown.freeLanes >> channel) & 1u) != 0)
+    {
+        // Notes off the grid: the steps can't show them, so the row shows the notes in miniature,
+        // pitch up and time across, over the bar on screen. A click opens the piano roll.
+        const auto from = page * stepsPerPage * core::Note::ticksPerStep;
+        const auto to = from + stepsPerPage * core::Note::ticksPerStep;
+        const auto left = columns[0].getX();
+        const auto right = columns[static_cast<size_t> (stepsPerPage - 1)].getRight();
+        const juce::Rectangle<float> box (left, row.stepY, right - left, stepSize);
+        g.setColour (line);
+        g.drawRoundedRectangle (box.reduced (shape::lineWidth * 0.5f), shape::stepRadius, shape::lineWidth);
+
+        const auto& notes = shown.freeNotes[static_cast<size_t> (channel)];
+        auto low = 127, high = 0;
+        for (const auto& n : notes)
+            low = std::min (low, n.pitch), high = std::max (high, n.pitch);
+        const auto inner = box.reduced (space::unit * 2.0f, space::unit * 2.0f);
+        const auto span = static_cast<float> (std::max (1, high - low));
+        g.setColour (ink);
+        for (const auto& n : notes)
+        {
+            if (n.end() <= from || n.start >= to)
+                continue;
+            const auto x0 = inner.getX() + inner.getWidth() * static_cast<float> (std::max (n.start, from) - from) /
+                                               static_cast<float> (to - from);
+            const auto x1 = inner.getX() + inner.getWidth() * static_cast<float> (std::min (n.end(), to) - from) /
+                                               static_cast<float> (to - from);
+            const auto y =
+                inner.getBottom() - 3.0f - (inner.getHeight() - 3.0f) * static_cast<float> (n.pitch - low) / span;
+            g.fillRoundedRectangle (x0, y, std::max (2.0f, x1 - x0 - 1.0f), 3.0f, 1.0f);
+        }
+        return;
+    }
 
     for (int col = 0; col < stepsPerPage; ++col)
         if (page * stepsPerPage + col < shown.length)
@@ -980,7 +1061,7 @@ PatternView::RackHit PatternView::rackAt (juce::Point<float> position) const
 
 int PatternView::patternChipAt (juce::Point<float> position) const
 {
-    if (view != View::pattern)
+    if (view == View::mixer)
         return -1;
     for (int p = 0; p < Session::maxPatterns; ++p)
         if (patternChips[static_cast<size_t> (p)].contains (position))
@@ -1086,6 +1167,13 @@ void PatternView::mouseDown (const juce::MouseEvent& e)
         break;
     case W::step:
     {
+        if (((shown.freeLanes >> hit.channel) & 1u) != 0)
+        {
+            // Off-grid notes are edited in the piano roll.
+            run ("channel.select", { { "channel", channelArg } });
+            run ("ui.view", { { "view", "pianoroll" } });
+            break;
+        }
         const auto step =
             core::Step::unpack (shown.steps[static_cast<size_t> (hit.channel)][static_cast<size_t> (hit.step)]);
         core::CommandArgs args { { "step", hit.step + 1 }, { "channel", channelArg } };
@@ -1190,7 +1278,7 @@ bool PatternView::keyPressed (const juce::KeyPress& key)
         K key;
         std::function<void()> action;
     };
-    const std::array<Binding, 18> bindings { {
+    const std::array<Binding, 19> bindings { {
         { K ('`'), [this] { toggleTerminal(); } },
         { K (K::spaceKey), [this] { run ("transport.toggle"); } },
         { K ('t'), [this] { run ("ui.theme.toggle"); } },
@@ -1206,6 +1294,7 @@ bool PatternView::keyPressed (const juce::KeyPress& key)
         { K (K::upKey), [this] { selectChannel (shown.selectedChannel - 1); } },
         { K (K::downKey), [this] { selectChannel (shown.selectedChannel + 1); } },
         { K (K::F6Key), [this] { run ("ui.view", { { "view", "pattern" } }); } },
+        { K (K::F7Key), [this] { run ("ui.view", { { "view", "pianoroll" } }); } },
         { K (K::F9Key), [this] { run ("ui.view", { { "view", "mixer" } }); } },
         { K ('['), [this] { showPage (page - 1); } },
         { K (']'), [this] { showPage (page + 1); } },

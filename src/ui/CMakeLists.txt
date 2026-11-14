@@ -10,6 +10,7 @@ add_library(tekno_ui STATIC
     components/ValueChip.cpp
     views/MixerView.cpp
     views/PatternView.cpp
+    views/PianoRollView.cpp
     ProjectActions.cpp)
 add_library(tekno::ui ALIAS tekno_ui)
 

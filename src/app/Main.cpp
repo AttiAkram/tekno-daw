@@ -197,15 +197,30 @@ private:
                                 mainWindow->sendLookAndFeelChange();
                             return core::CommandOutcome::ok();
                         } });
+        commands.add ({ "ui.snap",
+                        "Where the piano roll puts notes: step, 1/32, 1/3 (triplets) or free",
+                        { { "snap", core::CommandParam::Type::text, 0, 0, "step, 1/32, 1/3 or free" } },
+                        [this] (const core::CommandArgs& args)
+                        {
+                            const auto name = args["snap"].toString().trim().toLowerCase();
+                            const auto snap = ui::PianoRollView::snapFromName (name);
+                            if (! snap)
+                                return core::CommandOutcome::fail ("unknown snap '" + name +
+                                                                   "': use step, 1/32, 1/3 or free");
+                            if (mainView != nullptr)
+                                mainView->setSnap (*snap);
+                            return core::CommandOutcome::ok();
+                        } });
         commands.add ({ "ui.view",
-                        "Show a view: pattern (F6) or mixer (F9)",
-                        { { "view", core::CommandParam::Type::text, 0, 0, "pattern or mixer" } },
+                        "Show a view: pattern (F6), pianoroll (F7) or mixer (F9)",
+                        { { "view", core::CommandParam::Type::text, 0, 0, "pattern, pianoroll or mixer" } },
                         [this] (const core::CommandArgs& args)
                         {
                             const auto name = args["view"].toString().trim().toLowerCase();
                             const auto view = ui::PatternView::viewFromName (name);
                             if (! view)
-                                return core::CommandOutcome::fail ("unknown view '" + name + "': use pattern or mixer");
+                                return core::CommandOutcome::fail ("unknown view '" + name +
+                                                                   "': use pattern, pianoroll or mixer");
                             if (mainView != nullptr)
                                 mainView->showView (*view);
                             return core::CommandOutcome::ok();

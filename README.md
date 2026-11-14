@@ -28,7 +28,7 @@ and project version history.
 | ✅ M0 | Foundations: build, tests, CI, visual theme, style preview |
 | ✅ M1 | MVP: an acid synth playing a 16-step pattern |
 | ✅ M2 | Real sequencer: patterns, accent / slide / tie, swing, project files, drive, terminal |
-| ▶ M3 | Channel rack, drum sampler, mixer (✅ engine, rack, mixer view), piano roll, keymaps, tiling panels |
+| ▶ M3 | Channel rack, drum sampler, mixer, piano roll (✅ all four), keymaps, tiling panels |
 | M4 | VST3 hosting (out of process) and MIDI input |
 | M5 | Audio export, full project format, more import formats |
 | M6 | Arrangement and automation |
@@ -66,7 +66,7 @@ goes to `~/.cache/tekno-daw/launch.log`. From a terminal the same script works d
 | M / S next to a channel | mute / solo |
 | Double-click a channel's name | rename it |
 | Wheel beside the steps | scroll the rack when the channels don't fit |
-| F6 / F9 (or the top bar) | pattern view / mixer view |
+| F6 / F7 / F9 (or the top bar) | step sequencer / piano roll / mixer |
 | [ / ], or click "bar 1 of 4" | show the next 16 steps of a longer pattern |
 | Shift / Ctrl / Alt + click | accent / slide / tie |
 | Wheel on a step | pitch (Shift: octave) |
@@ -113,7 +113,7 @@ tekno-daw --theme=dark|light   start with this theme
 tekno-daw --snapshot=out.png   render the main window to a PNG and exit
 tekno-daw song.tekno           open a project
 tekno-daw song.tekno --render=out.wav --bars=8   render its selected pattern to a WAV, no sound card needed
-tekno-daw --view=mixer         start on the mixer
+tekno-daw --view=mixer         start on the mixer (or pattern, pianoroll)
 tekno-daw --no-audio           start without opening an audio device
 tekno-daw --run="bpm 138; swing 62"   open the terminal and run commands at start
 tekno-daw --smoke-test         open the window and quit after a second
@@ -134,10 +134,17 @@ ch 1                    select channel 1
 toggle 5 channel=2      edit another channel without selecting it
 channel.add sampler name=snare
 sample builtin:clap     load a built-in sound, or a WAV / AIFF / FLAC / Ogg file
+note.add 344 E3 16      a note at tick 344 (24 per step), a 1/16 triplet long
 tune -2                 tune the selected sampler down two semitones
 vol -6 channel=1        mixer: volume in dB, also pan, mute, solo, mixer.master
 help bpm                what a command takes; help alone lists them all
 ```
+
+The piano roll (F7) shows the selected channel's notes, with the other channels' notes in grey behind
+them. Click to add a note, drag to move it, drag its right edge to change its length, right-click to
+delete it, Shift+click for accent, Ctrl+click for slide. Notes snap to the step, to 1/32, to 1/16
+triplets, or nowhere (`ui.snap step|1/32|1/3|free`). The step sequencer and the piano roll edit the same
+notes; a row whose notes are off the grid shows them in miniature, and a click opens the piano roll.
 
 The mixer view (F9) has a strip per channel — fader, pan, mute, solo, a level meter with a peak line and
 a clip light (click it to reset) — and the master. A whole fader drag is one undo step.

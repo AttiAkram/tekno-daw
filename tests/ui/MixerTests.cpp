@@ -15,6 +15,7 @@
 #include "ui/components/LevelMeters.h"
 #include "ui/theme/Tokens.h"
 #include "ui/views/MixerView.h"
+#include "ui/views/PianoRollView.h"
 
 using tekno::ui::LevelMeters;
 using tekno::ui::MixerView;
@@ -65,4 +66,17 @@ TEST_CASE ("the fader puts -12 dB halfway, the ends at -60 and +6", "[ui][mixer]
     for (const auto db : { -48.0, -24.0, -6.0, 0.0, 3.0 })
         CHECK (fader.valueToProportionOfLength (db) ==
                Catch::Approx (MixerView::faderProportion (static_cast<float> (db))).margin (1.0e-4));
+}
+
+TEST_CASE ("piano roll snaps: names and sizes in ticks", "[ui][pianoroll]")
+{
+    using tekno::ui::PianoRollView;
+    using Snap = PianoRollView::Snap;
+    for (const auto snap : { Snap::step, Snap::thirtySecond, Snap::triplet, Snap::free })
+        CHECK (PianoRollView::snapFromName (PianoRollView::snapName (snap)) == snap);
+    CHECK (PianoRollView::snapTicks (Snap::step) == 24);
+    CHECK (PianoRollView::snapTicks (Snap::thirtySecond) == 12);
+    CHECK (PianoRollView::snapTicks (Snap::triplet) == 16); // three in two 1/16s
+    CHECK (PianoRollView::snapTicks (Snap::free) == 1);
+    CHECK_FALSE (PianoRollView::snapFromName ("1/7").has_value());
 }
