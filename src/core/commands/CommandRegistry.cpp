@@ -73,6 +73,13 @@ juce::String CommandRegistry::validate (const CommandDefinition& definition, con
         const auto& value = args[param.name];
         using Type = CommandParam::Type;
 
+        if (param.type == Type::text)
+        {
+            if (! value.isString())
+                return "'" + param.name + "' must be text";
+            continue;
+        }
+
         if (param.type == Type::boolean)
         {
             if (! (value.isBool() || value.isInt()))
@@ -112,7 +119,16 @@ CommandOutcome CommandRegistry::execute (const juce::String& id, const CommandAr
         pushUndo ({ id, args, outcome.undo });
         redoStack.clear(); // a new action makes the old future unreachable
     }
+    if (outcome.succeeded())
+        notifyModified (id);
     return outcome;
+}
+
+void CommandRegistry::notifyModified (const juce::String& id)
+{
+    const auto* definition = find (id);
+    if (definition != nullptr && definition->modifiesProject && onProjectModified != nullptr)
+        onProjectModified();
 }
 
 void CommandRegistry::pushUndo (HistoryEntry entry)
@@ -131,6 +147,7 @@ bool CommandRegistry::undo()
     auto entry = std::move (undoStack.back());
     undoStack.pop_back();
     entry.undo();
+    notifyModified (entry.id);
     redoStack.push_back (std::move (entry));
     return true;
 }
@@ -152,6 +169,8 @@ bool CommandRegistry::redo()
     auto outcome = definition->run (entry.args);
     if (outcome.succeeded() && outcome.undo != nullptr)
         pushUndo ({ entry.id, entry.args, outcome.undo });
+    if (outcome.succeeded())
+        notifyModified (entry.id);
     return outcome.succeeded();
 }
 } // namespace tekno::core

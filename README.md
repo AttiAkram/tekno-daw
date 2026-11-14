@@ -3,9 +3,9 @@
 An open source, pattern-based DAW for **acid / mental tekno** — built in the spirit of
 FL Studio's workflow, with a 303-style acid synth wired in from day one.
 
-> **Status: pre-alpha.** The built-in acid synth plays a 16-step pattern on your sound card: edit
-> steps, accents, slides and pitches while it plays, tweak the filter, undo your edits. Patterns
-> can't be saved yet (milestone M2, see the roadmap below).
+> **Status: pre-alpha.** The built-in acid synth plays on your sound card: 16 patterns of 1 to 64
+> steps with accent, slide and tie, swing, pattern changes on the bar, undo, and projects saved as
+> readable `.tekno` files. See the roadmap below.
 
 ## Goals
 
@@ -48,10 +48,15 @@ after that everything works offline. A full build takes about a minute on a 12-c
 |---|---|
 | Space | play / stop |
 | Click a step | on / off |
-| Shift+click / Ctrl+click | accent / slide |
+| Shift / Ctrl / Alt + click | accent / slide / tie |
 | Wheel on a step | pitch (Shift: octave) |
 | Drag or wheel on the BPM pill | tempo (Shift: fine, double-click: 130) |
+| Drag the steps pill | pattern length, 1 to 64 |
+| Drag the swing pill | swing, 50% straight to 75% |
+| PgUp / PgDn, or click 1-16 | select a pattern (while playing it starts on the next bar) |
+| Double-click the title | rename the pattern |
 | Ctrl+Z / Ctrl+Y | undo / redo pattern edits |
+| Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+N | save / save as / open / new |
 | T | light / dark theme |
 
 ### Presets
@@ -85,10 +90,20 @@ This installs only what `scripts/install-deps-ubuntu.sh` lists, then runs the `c
 ```
 tekno-daw --theme=dark|light   start with this theme
 tekno-daw --snapshot=out.png   render the main window to a PNG and exit
-tekno-daw --render=out.wav --bars=8   render the pattern to a WAV, no sound card needed
+tekno-daw song.tekno           open a project
+tekno-daw song.tekno --render=out.wav --bars=8   render its selected pattern to a WAV, no sound card needed
 tekno-daw --no-audio           start without opening an audio device
 tekno-daw --smoke-test         open the window and quit after a second
 tekno-daw --version
+```
+
+## Project files
+
+Projects are `.tekno` files: plain JSON, written in a fixed order with one step per line and notes by
+name, so they are easy to read, edit by hand and compare between versions:
+
+```json
+{ "on": true, "note": "A2", "accent": true, "slide": false, "tie": false },
 ```
 
 ## Stack

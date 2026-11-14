@@ -23,7 +23,9 @@ void AudioEngine::prepare (double newSampleRate) noexcept
     voice.prepare (sampleRate);
     wasPlaying = false;
     step = -1;
+    lastStep = {};
     samplesIntoStep = 0.0;
+    currentStepLength = 0.0;
     holdGate = gateReleased = false;
     session.transport.currentStep.store (-1);
 }
@@ -44,15 +46,16 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
     const auto playing = transport.playing.load (std::memory_order_relaxed);
     const auto bpm =
         std::clamp (transport.bpm.load (std::memory_order_relaxed), TransportState::minBpm, TransportState::maxBpm);
-    const auto stepLength = samplesPerStep (sampleRate, bpm);
-    const auto gateSamples = stepLength * gateLength;
+    const auto straightLength = samplesPerStep (sampleRate, bpm);
 
     voice.setControls (readControls());
 
     if (playing && ! wasPlaying)
     {
         step = -1;
-        samplesIntoStep = stepLength; // the very first sample starts step 0
+        lastStep = {};
+        currentStepLength = 0.0;
+        samplesIntoStep = 0.0; // the very first sample starts step 0
     }
     else if (! playing && wasPlaying)
     {
@@ -66,15 +69,15 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
     {
         if (playing)
         {
-            if (samplesIntoStep >= stepLength)
+            if (samplesIntoStep >= currentStepLength)
             {
-                samplesIntoStep -= stepLength;
-                if (samplesIntoStep >= stepLength) // tempo jumped up a lot: don't fire twice in a row
+                samplesIntoStep = std::max (0.0, samplesIntoStep - currentStepLength);
+                startStep (step + 1, straightLength);
+                if (samplesIntoStep >= currentStepLength) // tempo jumped up a lot: don't fire twice in a row
                     samplesIntoStep = 0.0;
-                startStep ((step + 1) % Pattern::numSteps);
             }
 
-            if (! gateReleased && ! holdGate && samplesIntoStep >= gateSamples)
+            if (! gateReleased && ! holdGate && samplesIntoStep >= currentStepLength * gateLength)
             {
                 voice.gateOff();
                 gateReleased = true;
@@ -89,20 +92,36 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
     }
 }
 
-void AudioEngine::startStep (int index) noexcept
+void AudioEngine::startStep (int index, double straightLength) noexcept
 {
-    const auto& pattern = session.pattern;
+    // Wrap, and switch pattern on the wrap: the pattern being edited takes over at the bar line.
+    if (step < 0 || index >= session.pattern (patternIndex).getLength())
+    {
+        index = 0;
+        patternIndex = session.selected.load (std::memory_order_relaxed);
+        session.playing.store (patternIndex, std::memory_order_relaxed);
+    }
+
+    const auto& pattern = session.pattern (patternIndex);
     const auto current = pattern.getStep (index);
-    const auto previous = step >= 0 ? pattern.getStep (step) : Step {};
-    const auto slidingIn = step >= 0 && previous.on && previous.slide && voice.isGateOn();
+    const auto gateOpen = step >= 0 && voice.isGateOn();
+    const auto slidingIn = gateOpen && lastStep.on && lastStep.slide;
+    const auto tiedIn = gateOpen && current.tie;
 
     step = index;
+    lastStep = current;
     session.transport.currentStep.store (index, std::memory_order_relaxed);
+    currentStepLength =
+        swungStepLength (straightLength, session.transport.swing.load (std::memory_order_relaxed), index);
     gateReleased = false;
 
     if (current.on)
     {
-        if (slidingIn)
+        if (tiedIn)
+        {
+            // hold the previous note: no new pitch, no retrigger
+        }
+        else if (slidingIn)
             voice.glideTo (current.note); // no retrigger: the slide is one continuous gesture
         else
             voice.noteOn (current.note, current.accent);
@@ -113,8 +132,11 @@ void AudioEngine::startStep (int index) noexcept
         gateReleased = true;
     }
 
-    const auto next = pattern.getStep ((index + 1) % Pattern::numSteps);
-    holdGate = current.on && current.slide && next.on;
+    const auto nextIndex = index + 1 < pattern.getLength() ? index + 1 : 0;
+    const auto& nextPattern =
+        nextIndex == 0 ? session.pattern (session.selected.load (std::memory_order_relaxed)) : pattern;
+    const auto next = nextPattern.getStep (nextIndex);
+    holdGate = current.on && next.on && (current.slide || next.tie);
 }
 
 void AudioEngine::audioDeviceIOCallbackWithContext (const float* const*, int, float* const* outputs, int numOutputs,

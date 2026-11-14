@@ -8,64 +8,52 @@
 
 #include "ui/views/PatternView.h"
 
-#include <juce_audio_basics/juce_audio_basics.h>
+#include "core/model/NoteNames.h"
 
 namespace tekno::ui
 {
 namespace
 {
-    juce::String formatBpm (double bpm)
-    {
-        return juce::String (bpm, juce::exactlyEqual (bpm, std::floor (bpm)) ? 0 : 1) + " bpm";
-    }
-
     using P = tokens::Palette;
     namespace type = tokens::type;
     namespace shape = tokens::shape;
     namespace space = tokens::space;
     using core::Pattern;
+    using core::Session;
 
     constexpr int stepsPerBeat = 4;
     constexpr float maxStepSize = 64.0f;
+    constexpr float minStepSize = 28.0f;
     constexpr float chipWidth = 112.0f;
     constexpr float knobSize = 52.0f;
     constexpr float accentMarkHeight = 3.0f;
+    constexpr float rowExtra = 52.0f; // accent mark above, slide line + note name below
+    constexpr float patternChipSize = 28.0f;
     constexpr int refreshHz = 60;
 
-    juce::String noteName (int midiNote)
+    juce::String formatBpm (double bpm)
     {
-        return juce::MidiMessage::getMidiNoteName (midiNote, true, true, 4); // 45 -> "A2"
+        return juce::String (bpm, juce::exactlyEqual (bpm, std::floor (bpm)) ? 0 : 1) + " bpm";
     }
 
-    // Keymap of this view. Every key runs a command; a contextual keymap system replaces this later.
-    struct KeyBinding
+    juce::String formatSwing (double percent)
     {
-        juce::KeyPress key;
-        const char* command;
-    };
-
-    const std::array<KeyBinding, 5>& keyBindings()
-    {
-        using K = juce::KeyPress;
-        using M = juce::ModifierKeys;
-        static const std::array<KeyBinding, 5> bindings { {
-            { K (K::spaceKey), "transport.toggle" },
-            { K ('t'), "ui.theme.toggle" },
-            { K ('z', M::commandModifier, 0), "edit.undo" },
-            { K ('z', M::commandModifier | M::shiftModifier, 0), "edit.redo" },
-            { K ('y', M::commandModifier, 0), "edit.redo" },
-        } };
-        return bindings;
+        return "swing " + juce::String (juce::roundToInt (percent)) + "%";
     }
 } // namespace
 
-PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, core::Session& sessionToShow,
-                          core::CommandRegistry& registry, std::function<AudioStatus()> audioStatusProvider)
+PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionToShow, core::CommandRegistry& registry,
+                          ProjectActions& projectActions, std::function<AudioStatus()> audioStatusProvider)
     : lnf (teknoLookAndFeel)
     , session (sessionToShow)
     , commands (registry)
+    , actions (projectActions)
     , audioStatus (std::move (audioStatusProvider))
+    , swingChip (core::TransportState::minSwing, core::TransportState::maxSwing, core::TransportState::minSwing,
+                 formatSwing)
     , bpmChip (core::TransportState::minBpm, core::TransportState::maxBpm, core::TransportState::defaultBpm, formatBpm)
+    , lengthChip (1, Pattern::maxSteps, Pattern::defaultLength,
+                  [] (double steps) { return juce::String (juce::roundToInt (steps)) + " steps"; })
     , knobs {
         { { "cutoff", "synth.cutoff", &sessionToShow.synth.cutoff, core::AcidParams::defaultCutoff, {} },
           { "resonance", "synth.resonance", &sessionToShow.synth.resonance, core::AcidParams::defaultResonance, {} },
@@ -88,17 +76,23 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, core::Session& ses
     }
     navButtons[0].setToggleState (true, juce::dontSendNotification);
 
+    swingChip.onChange = [this] (double percent) { run ("transport.swing", { { "percent", percent } }); };
     bpmChip.onChange = [this] (double bpm) { run ("transport.bpm", { { "bpm", bpm } }); };
-    addAndMakeVisible (bpmChip);
+    lengthChip.onChange = [this] (double steps) { run ("pattern.length", { { "steps", juce::roundToInt (steps) } }); };
+    for (auto* chip : { &swingChip, &bpmChip, &lengthChip })
+        addAndMakeVisible (chip);
 
     setRole (playButton, Role::primary);
-    playButton.setMouseClickGrabsKeyboardFocus (false);
     playButton.onClick = [this] { run ("transport.toggle"); };
-    addAndMakeVisible (playButton);
-
-    waveButton.setMouseClickGrabsKeyboardFocus (false);
     waveButton.onClick = [this] { run ("synth.waveform", { { "square", ! session.synth.square.load() } }); };
-    addAndMakeVisible (waveButton);
+    newButton.onClick = [this] { actions.newProject(); };
+    openButton.onClick = [this] { actions.openProject(); };
+    saveButton.onClick = [this] { actions.save(); };
+    for (auto* b : { &playButton, &waveButton, &newButton, &openButton, &saveButton })
+    {
+        b->setMouseClickGrabsKeyboardFocus (false);
+        addAndMakeVisible (b);
+    }
 
     for (auto& knob : knobs)
     {
@@ -113,6 +107,13 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, core::Session& ses
         s.onValueChange = [this, &knob] { run (knob.command, { { "value", knob.slider.getValue() } }); };
         addAndMakeVisible (s);
     }
+
+    renameEditor.setFont (lnf.fonts().font (type::viewTitle));
+    renameEditor.setJustification (juce::Justification::centredLeft);
+    renameEditor.onReturnKey = [this] { finishRename (true); };
+    renameEditor.onEscapeKey = [this] { finishRename (false); };
+    renameEditor.onFocusLost = [this] { finishRename (true); };
+    addChildComponent (renameEditor);
 
     shown = takeSnapshot();
     shownAudio = audioStatus ? audioStatus() : AudioStatus {};
@@ -132,19 +133,29 @@ void PatternView::run (const juce::String& command, const core::CommandArgs& arg
 PatternView::Snapshot PatternView::takeSnapshot() const
 {
     Snapshot s;
-    for (int i = 0; i < Pattern::numSteps; ++i)
-        s.steps[static_cast<size_t> (i)] = session.pattern.getStep (i).pack();
-    s.currentStep = session.transport.currentStep.load();
+    const auto& pattern = session.selectedPattern();
+    for (int i = 0; i < Pattern::maxSteps; ++i)
+        s.steps[static_cast<size_t> (i)] = pattern.getStep (i).pack();
+    s.length = pattern.getLength();
+    s.selected = session.selected.load();
+    s.playingPattern = session.playing.load();
+    for (int p = 0; p < Session::maxPatterns; ++p)
+        if (! session.pattern (p).isEmpty())
+            s.usedPatterns |= 1u << p;
     s.playing = session.transport.playing.load();
+    s.currentStep = s.playing && s.playingPattern == s.selected ? session.transport.currentStep.load() : -1;
     s.bpm = session.transport.bpm.load();
+    s.swing = session.transport.swing.load();
     s.square = session.synth.square.load();
+    s.patternName = session.project.patternNames[static_cast<size_t> (s.selected)];
+    s.documentTitle = actions.documentTitle();
     return s;
 }
 
 void PatternView::timerCallback()
 {
-    // Controls follow the session (changed by undo, and later by the terminal or remote clients),
-    // unless the user is holding them right now.
+    // Controls follow the session (changed by undo, opening a file, later the terminal or remote
+    // clients), unless the user is holding them right now.
     for (auto& knob : knobs)
         if (! knob.slider.isMouseButtonDown())
             knob.slider.setValue (knob.value->load(), juce::dontSendNotification);
@@ -152,8 +163,16 @@ void PatternView::timerCallback()
     const auto now = takeSnapshot();
     if (! bpmChip.isBeingDragged())
         bpmChip.setValue (now.bpm);
+    if (! swingChip.isBeingDragged())
+        swingChip.setValue (now.swing);
+    if (! lengthChip.isBeingDragged())
+        lengthChip.setValue (now.length);
     playButton.setButtonText (now.playing ? "stop" : "play");
     waveButton.setButtonText (now.square ? "square" : "saw");
+
+    if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
+        if (window->getName() != "tekno-daw  /  " + now.documentTitle)
+            window->setName ("tekno-daw  /  " + now.documentTitle);
 
     if (++timerTicks % refreshHz == 0 && audioStatus)
     {
@@ -168,7 +187,10 @@ void PatternView::timerCallback()
 
     if (now != shown)
     {
+        const auto relayout = now.length != shown.length;
         shown = now;
+        if (relayout)
+            layoutSteps();
         repaint();
     }
 }
@@ -202,21 +224,32 @@ void PatternView::resized()
     }
 
     auto transport = topBar.reduced (space::gutter, 0.0f);
-    playButton.setBounds (
-        transport.removeFromRight (112.0f).withSizeKeepingCentre (112.0f, shape::pillHeight).toNearestInt());
-    transport.removeFromRight (space::gap);
-    bpmChip.setBounds (
-        transport.removeFromRight (112.0f).withSizeKeepingCentre (112.0f, shape::pillHeight).toNearestInt());
+    auto pill = [&transport] (juce::Component& c, float width)
+    {
+        c.setBounds (transport.removeFromRight (width).withSizeKeepingCentre (width, shape::pillHeight).toNearestInt());
+        transport.removeFromRight (space::gap);
+    };
+    pill (playButton, 112.0f);
+    pill (bpmChip, 112.0f);
+    pill (swingChip, 128.0f);
 
-    // Left column: browser, 303, keys, audio — divided by thin lines.
+    // Left column: project, 303, keys, audio — divided by thin lines.
     auto column = leftColumn.reduced (space::gutter);
-    browserArea = column.removeFromTop (112.0f);
+    projectArea = column.removeFromTop (112.0f);
     column.removeFromTop (space::gutter);
     synthArea = column.removeFromTop (316.0f);
     column.removeFromTop (space::gutter);
     audioArea = column.removeFromBottom (76.0f);
     column.removeFromBottom (space::gutter);
     keysArea = column;
+
+    auto buttons = projectArea.withTrimmedTop (projectArea.getHeight() - shape::pillHeightCompact);
+    const auto buttonWidth = (buttons.getWidth() - space::unit * 2.0f) / 3.0f;
+    for (auto* b : { &newButton, &openButton, &saveButton })
+    {
+        b->setBounds (buttons.removeFromLeft (buttonWidth).toNearestInt());
+        buttons.removeFromLeft (space::unit);
+    }
 
     auto knobGrid = synthArea.withTrimmedTop (36.0f);
     const auto cellWidth = knobGrid.getWidth() * 0.5f;
@@ -233,31 +266,61 @@ void PatternView::resized()
             waveButton.setBounds (top.withSizeKeepingCentre (cellWidth - space::gap, shape::pillHeight).toNearestInt());
     }
 
-    // Content: title, metadata, dashed divider, the step row.
+    // Content: title, metadata, dashed divider, pattern bank, step grid.
     auto c = content;
     titleArea = c.removeFromTop (92.0f);
     metaArea = c.removeFromTop (24.0f);
     c.removeFromTop (space::gutter);
     dividerArea = c.removeFromTop (shape::lineWidth);
-    c.removeFromTop (space::gutter * 1.5f);
-    beatLabelArea = c.removeFromTop (24.0f);
-    c.removeFromTop (space::unit * 3.0f);
+    c.removeFromTop (space::gutter);
+    patternBarArea = c.removeFromTop (shape::pillHeight);
+    c.removeFromTop (space::gutter);
+    gridArea = c;
 
-    // 16 steps = 4 beats: the design's 4-column grid IS the bar (gap 12 between beats).
-    const auto stepGap = space::unit;
-    const auto gridWidth = c.getWidth() - chipWidth - space::gutter;
-    const auto fixedGaps = space::gap * 3.0f + stepGap * 3.0f * 4.0f;
-    const auto stepSize =
-        juce::jmin (maxStepSize, std::floor ((gridWidth - fixedGaps) / static_cast<float> (Pattern::numSteps)));
-    auto row = c.removeFromTop (stepSize);
-
-    chipArea = row.removeFromLeft (chipWidth).withSizeKeepingCentre (chipWidth, shape::pillHeight);
-    row.removeFromLeft (space::gutter);
-    auto x = row.getX();
-    for (int s = 0; s < Pattern::numSteps; ++s)
+    // Pattern bank: 16 squares in groups of 4, the length chip on the right.
+    lengthChip.setBounds (patternBarArea.withLeft (patternBarArea.getRight() - 120.0f).toNearestInt());
+    auto x = patternBarArea.getX();
+    for (int p = 0; p < Session::maxPatterns; ++p)
     {
-        stepAreas[static_cast<size_t> (s)] = { x, row.getY(), stepSize, stepSize };
-        x += stepSize + ((s + 1) % stepsPerBeat == 0 ? space::gap : stepGap);
+        patternChips[static_cast<size_t> (p)] = juce::Rectangle<float> (
+            x, patternBarArea.getCentreY() - patternChipSize * 0.5f, patternChipSize, patternChipSize);
+        x += patternChipSize + ((p + 1) % 4 == 0 ? space::gap : space::unit);
+    }
+
+    if (renameEditor.isVisible())
+        renameEditor.setBounds (titleArea.withTrimmedTop (titleArea.getHeight() - 56.0f).toNearestInt());
+
+    layoutSteps();
+}
+
+void PatternView::layoutSteps()
+{
+    // Rows of 16 steps = one bar each. Steps shrink to fit the width and the number of rows.
+    const auto length = session.selectedPattern().getLength();
+    const auto rows = (length + stepsPerRow - 1) / stepsPerRow;
+    laidOutLength = length;
+
+    auto g = gridArea;
+    beatLabelArea = g.removeFromTop (20.0f);
+    g.removeFromTop (space::unit * 3.0f);
+
+    const auto stepGap = space::unit;
+    const auto gridWidth = g.getWidth() - chipWidth - space::gutter;
+    const auto fixedGaps = space::gap * 3.0f + stepGap * 3.0f * 4.0f;
+    const auto byWidth = std::floor ((gridWidth - fixedGaps) / static_cast<float> (stepsPerRow));
+    const auto byHeight = std::floor (g.getHeight() / static_cast<float> (rows) - rowExtra - space::gap);
+    const auto stepSize = juce::jlimit (minStepSize, maxStepSize, juce::jmin (byWidth, byHeight));
+
+    chipArea = g.withHeight (stepSize).withWidth (chipWidth).withSizeKeepingCentre (chipWidth, shape::pillHeight);
+    const auto left = g.getX() + chipWidth + space::gutter;
+    for (int s = 0; s < Pattern::maxSteps; ++s)
+    {
+        const auto row = s / stepsPerRow, col = s % stepsPerRow;
+        auto sx = left;
+        for (int k = 0; k < col; ++k)
+            sx += stepSize + ((k + 1) % stepsPerBeat == 0 ? space::gap : stepGap);
+        const auto sy = g.getY() + static_cast<float> (row) * (stepSize + rowExtra + space::gap);
+        stepAreas[static_cast<size_t> (s)] = { sx, sy, stepSize, stepSize };
     }
 }
 
@@ -307,10 +370,11 @@ void PatternView::paintLeftColumn (juce::Graphics& g) const
         g.fillRect (juce::Rectangle<float> (leftColumn.getX(), section.getY() - space::gutter * 0.5f,
                                             leftColumn.getWidth() - shape::lineWidth, shape::lineWidth));
 
-    auto browser = browserArea;
-    drawText (g, "Browser", type::sectionTitle, ink, browser.removeFromTop (28.0f));
-    drawText (g, "Presets, samples and plugins", type::meta, muted, browser.removeFromTop (22.0f));
-    drawText (g, "arrive with M3 and M4", type::meta, muted, browser.removeFromTop (22.0f));
+    auto project = projectArea;
+    drawText (g, "Project", type::sectionTitle, ink, project.removeFromTop (28.0f));
+    drawText (g, actions.documentName(), type::meta, ink, project.removeFromTop (22.0f));
+    drawText (g, session.project.hasUnsavedChanges() ? "unsaved changes" : "saved", type::meta, muted,
+              project.removeFromTop (22.0f));
 
     drawText (g, "303 / acid", type::sectionTitle, ink, synthArea.withHeight (28.0f));
     for (const auto& knob : knobs)
@@ -323,22 +387,21 @@ void PatternView::paintLeftColumn (juce::Graphics& g) const
 
     auto keys = keysArea;
     drawText (g, "Keys", type::sectionTitle, ink, keys.removeFromTop (28.0f));
-    const std::array<std::pair<const char*, const char*>, 9> hints { {
+    const std::array<std::pair<const char*, const char*>, 8> hints { {
         { "Space", "play / stop" },
         { "Click", "step on / off" },
-        { "Shift+click", "accent" },
-        { "Ctrl+click", "slide" },
+        { "Shift Ctrl Alt", "accent, slide, tie" },
         { "Wheel", "pitch" },
-        { "Shift+wheel", "octave" },
-        { "Ctrl+Z", "undo" },
-        { "Ctrl+Y", "redo" },
-        { "T", "light / dark theme" },
+        { "PgUp / PgDn", "pattern" },
+        { "Ctrl+Z / Y", "undo / redo" },
+        { "Ctrl+S / O", "save / open" },
+        { "T", "theme" },
     } };
     for (const auto& [key, what] : hints)
     {
-        if (keys.getHeight() < 22.0f)
+        if (keys.getHeight() < 20.0f)
             break;
-        auto line = keys.removeFromTop (22.0f);
+        auto line = keys.removeFromTop (20.0f);
         drawText (g, key, type::meta, ink, line.removeFromLeft (92.0f));
         drawText (g, what, type::meta, muted, line);
     }
@@ -348,20 +411,19 @@ void PatternView::paintLeftColumn (juce::Graphics& g) const
     auto line = audio.removeFromTop (22.0f);
     paintBadge (g, line.removeFromLeft (shape::badgeSize), shownAudio.running, shownAudio.running ? "A" : "!");
     line.removeFromLeft (space::unit * 2.0f);
+    const auto detail = audio.removeFromTop (22.0f).withTrimmedLeft (shape::badgeSize + space::unit * 2.0f);
     if (shownAudio.running)
     {
         drawText (g, shownAudio.deviceName, type::meta, ink, line);
         drawText (g,
                   juce::String (shownAudio.sampleRate / 1000.0, 1) + " kHz  /  " +
                       juce::String (shownAudio.bufferSize) + " samples",
-                  type::meta, muted,
-                  audio.removeFromTop (22.0f).withTrimmedLeft (shape::badgeSize + space::unit * 2.0f));
+                  type::meta, muted, detail);
     }
     else
     {
         drawText (g, "no audio output", type::meta, ink, line);
-        drawText (g, shownAudio.problem, type::meta, muted,
-                  audio.removeFromTop (22.0f).withTrimmedLeft (shape::badgeSize + space::unit * 2.0f));
+        drawText (g, shownAudio.problem, type::meta, muted, detail);
     }
 }
 
@@ -369,37 +431,71 @@ void PatternView::paintContent (juce::Graphics& g) const
 {
     const auto ink = lnf.colour (&P::ink);
     const auto muted = lnf.colour (&P::inkMuted);
+    const auto line = lnf.colour (&P::line);
 
-    drawText (g, "acid 01", type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
-    drawText (g,
-              "Pattern 1  /  16 steps  /  " + formatBpm (shown.bpm) + "  /  " + (shown.playing ? "playing" : "stopped"),
-              type::meta, muted, metaArea);
+    if (! renameEditor.isVisible())
+        drawText (g, shown.patternName, type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
+
+    auto meta = "Pattern " + juce::String (shown.selected + 1) + " of " + juce::String (Session::maxPatterns) +
+                "  /  " + formatBpm (shown.bpm) + "  /  " + formatSwing (shown.swing) + "  /  ";
+    if (! shown.playing)
+        meta << "stopped";
+    else if (shown.playingPattern == shown.selected)
+        meta << "playing";
+    else
+        meta << "playing pattern " << (shown.playingPattern + 1) << ", this one starts at the next bar";
+    drawText (g, meta, type::meta, muted, metaArea);
 
     const float dashes[] { shape::dashLength, shape::dashGap };
-    g.setColour (lnf.colour (&P::line));
+    g.setColour (line);
     g.drawDashedLine ({ dividerArea.getX(), dividerArea.getY(), dividerArea.getRight(), dividerArea.getY() }, dashes, 2,
                       shape::lineWidth);
 
-    for (int beat = 0; beat < Pattern::numSteps / stepsPerBeat; ++beat)
+    // Pattern bank: filled = editing, outline ink = holds something, dot under = playing.
+    for (int p = 0; p < Session::maxPatterns; ++p)
+    {
+        const auto box = patternChips[static_cast<size_t> (p)].reduced (shape::lineWidth * 0.5f);
+        const auto isSelected = p == shown.selected;
+        const auto used = (shown.usedPatterns >> p) & 1u;
+        if (isSelected)
+        {
+            g.setColour (ink);
+            g.fillRoundedRectangle (box, shape::stepRadius);
+        }
+        g.setColour (isSelected || used ? ink : line);
+        g.drawRoundedRectangle (box, shape::stepRadius, shape::lineWidth);
+        drawText (g, juce::String (p + 1), type::meta,
+                  isSelected ? lnf.colour (&P::bg)
+                  : used     ? ink
+                             : muted,
+                  box, juce::Justification::centred);
+        if (shown.playing && p == shown.playingPattern)
+        {
+            const auto d = shape::navDotSize;
+            g.setColour (ink);
+            g.fillEllipse (box.getCentreX() - d * 0.5f, box.getBottom() + 3.0f, d, d);
+        }
+    }
+
+    for (int beat = 0; beat < stepsPerRow / stepsPerBeat; ++beat)
     {
         const auto first = stepAreas[static_cast<size_t> (beat * stepsPerBeat)];
         drawText (g, juce::String (beat + 1), type::meta, muted,
                   beatLabelArea.withX (first.getX()).withWidth (first.getWidth()));
-    }
-    if (shown.currentStep >= 0) // the playhead is a dot, readable without colour
-    {
-        const auto column = stepAreas[static_cast<size_t> (shown.currentStep)];
-        const auto d = shape::navDotSize;
-        g.setColour (ink);
-        g.fillEllipse (column.getCentreX() - d * 0.5f, beatLabelArea.getBottom() - d, d, d);
     }
 
     const auto chip = chipArea.reduced (shape::lineWidth * 0.5f);
     g.setColour (ink);
     g.fillRoundedRectangle (chip, chip.getHeight() * 0.5f);
     drawText (g, "303", type::control, lnf.colour (&P::bg), chip, juce::Justification::centred);
+    for (int row = 1; row * stepsPerRow < shown.length; ++row)
+    {
+        const auto first = stepAreas[static_cast<size_t> (row * stepsPerRow)];
+        drawText (g, "bar " + juce::String (row + 1), type::meta, muted,
+                  juce::Rectangle<float> (chipArea.getX(), first.getY(), chipWidth, first.getHeight()));
+    }
 
-    for (int s = 0; s < Pattern::numSteps; ++s)
+    for (int s = 0; s < shown.length; ++s)
         paintStep (g, s);
 }
 
@@ -409,19 +505,44 @@ void PatternView::paintStep (juce::Graphics& g, int index) const
     const auto area = stepAreas[static_cast<size_t> (index)];
     const auto box = area.reduced (shape::lineWidth * 0.5f);
     const auto ink = lnf.colour (&P::ink);
+    const auto muted = lnf.colour (&P::inkMuted);
 
     // Yellow only for the step that is sounding right now; on = filled ink, off = outline.
     const auto sounding = step.on && index == shown.currentStep;
+    const auto fill = sounding ? lnf.colour (&P::accent) : ink;
 
     if (step.on)
     {
-        g.setColour (sounding ? lnf.colour (&P::accent) : ink);
+        g.setColour (fill);
         g.fillRoundedRectangle (box, shape::stepRadius);
+
+        // A tie fuses the step with the previous one: the gap between them is filled.
+        const auto previous =
+            index > 0 ? core::Step::unpack (shown.steps[static_cast<size_t> (index - 1)]) : core::Step {};
+        if (step.tie && previous.on && index % stepsPerRow != 0)
+        {
+            const auto prevArea = stepAreas[static_cast<size_t> (index - 1)];
+            g.setColour (ink);
+            g.fillRect (juce::Rectangle<float> (prevArea.getRight() - shape::stepRadius, box.getY(),
+                                                area.getX() - prevArea.getRight() + shape::stepRadius * 2.0f,
+                                                box.getHeight()));
+            g.setColour (fill);
+            g.fillRoundedRectangle (box, shape::stepRadius);
+        }
     }
     g.setColour (sounding                            ? lnf.colour (&P::accentOutline)
                  : (step.on || index == hoveredStep) ? ink
                                                      : lnf.colour (&P::line));
     g.drawRoundedRectangle (box, shape::stepRadius, shape::lineWidth);
+
+    const auto slideY = area.getBottom() + space::unit * 2.0f;
+    const auto labelArea = area.withY (slideY + space::unit).withHeight (20.0f);
+    if (index == shown.currentStep) // the playhead, readable without colour: a dot under the step
+    {
+        const auto d = shape::navDotSize;
+        g.setColour (ink);
+        g.fillEllipse (area.getCentreX() - d * 0.5f, labelArea.getBottom() + 2.0f, d, d);
+    }
 
     if (! step.on)
         return;
@@ -430,27 +551,42 @@ void PatternView::paintStep (juce::Graphics& g, int index) const
     if (step.accent) // a bar above the step
         g.fillRect (area.getX(), area.getY() - accentMarkHeight - space::unit, area.getWidth(), accentMarkHeight);
 
-    const auto next = core::Step::unpack (shown.steps[static_cast<size_t> ((index + 1) % Pattern::numSteps)]);
-    const auto slideY = area.getBottom() + space::unit * 2.0f;
-    if (step.slide && next.on && index + 1 < Pattern::numSteps) // a line into the next step
+    const auto nextIndex = index + 1 < shown.length ? index + 1 : -1;
+    const auto next =
+        nextIndex >= 0 ? core::Step::unpack (shown.steps[static_cast<size_t> (nextIndex)]) : core::Step {};
+    if (step.slide && next.on && nextIndex % stepsPerRow != 0) // a line into the next step
     {
-        const auto nextArea = stepAreas[static_cast<size_t> (index + 1)];
+        const auto nextArea = stepAreas[static_cast<size_t> (nextIndex)];
         g.drawLine (area.getCentreX(), slideY, nextArea.getCentreX(), slideY, shape::iconStroke);
         g.fillEllipse (area.getCentreX() - 2.0f, slideY - 2.0f, 4.0f, 4.0f);
     }
 
-    drawText (g, noteName (step.note), type::meta, lnf.colour (&P::inkMuted),
-              area.withY (slideY + space::unit).withHeight (20.0f), juce::Justification::centredTop);
+    drawText (g, step.tie ? juce::String ("tie") : core::noteName (step.note), type::meta, muted, labelArea,
+              juce::Justification::centredTop);
 }
 
 // --- interaction --------------------------------------------------------------------------------
 
 int PatternView::stepAt (juce::Point<float> position) const
 {
-    for (int s = 0; s < Pattern::numSteps; ++s)
+    for (int s = 0; s < shown.length; ++s)
         if (stepAreas[static_cast<size_t> (s)].contains (position))
             return s;
     return -1;
+}
+
+int PatternView::patternChipAt (juce::Point<float> position) const
+{
+    for (int p = 0; p < Session::maxPatterns; ++p)
+        if (patternChips[static_cast<size_t> (p)].contains (position))
+            return p;
+    return -1;
+}
+
+void PatternView::selectPattern (int index)
+{
+    run ("pattern.select", { { "pattern", juce::jlimit (0, Session::maxPatterns - 1, index) + 1 } });
+    timerCallback();
 }
 
 void PatternView::mouseMove (const juce::MouseEvent& e)
@@ -471,18 +607,54 @@ void PatternView::mouseExit (const juce::MouseEvent&)
 
 void PatternView::mouseDown (const juce::MouseEvent& e)
 {
+    if (const auto chip = patternChipAt (e.position); chip >= 0)
+    {
+        selectPattern (chip);
+        return;
+    }
+
     const auto index = stepAt (e.position);
     if (index < 0)
         return;
 
-    const auto step = session.pattern.getStep (index);
+    const auto step = session.selectedPattern().getStep (index);
     if (e.mods.isShiftDown())
         run ("pattern.step.accent", { { "step", index }, { "on", ! (step.on && step.accent) } });
     else if (e.mods.isCtrlDown())
         run ("pattern.step.slide", { { "step", index }, { "on", ! (step.on && step.slide) } });
+    else if (e.mods.isAltDown())
+        run ("pattern.step.tie", { { "step", index }, { "on", ! (step.on && step.tie) } });
     else
         run ("pattern.step.toggle", { { "step", index } });
     timerCallback(); // show the edit now, not on the next tick
+}
+
+void PatternView::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (titleArea.contains (e.position))
+        startRename();
+}
+
+void PatternView::startRename()
+{
+    renameEditor.setText (shown.patternName, false);
+    renameEditor.setBounds (titleArea.withTrimmedTop (titleArea.getHeight() - 56.0f).toNearestInt());
+    renameEditor.setVisible (true);
+    renameEditor.grabKeyboardFocus();
+    renameEditor.selectAll();
+    repaint();
+}
+
+void PatternView::finishRename (bool keep)
+{
+    if (! renameEditor.isVisible())
+        return;
+    renameEditor.setVisible (false);
+    if (keep && renameEditor.getText().trim() != shown.patternName)
+        run ("pattern.rename", { { "name", renameEditor.getText() } });
+    grabKeyboardFocus();
+    timerCallback();
+    repaint();
 }
 
 void PatternView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
@@ -492,7 +664,7 @@ void PatternView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
         return;
 
     const auto interval = e.mods.isShiftDown() ? 12 : 1;
-    const auto note = session.pattern.getStep (index).note + (wheel.deltaY > 0 ? interval : -interval);
+    const auto note = session.selectedPattern().getStep (index).note + (wheel.deltaY > 0 ? interval : -interval);
     if (note >= core::Step::minNote && note <= core::Step::maxNote)
         run ("pattern.step.note", { { "step", index }, { "note", note } });
     timerCallback();
@@ -500,11 +672,36 @@ void PatternView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
 
 bool PatternView::keyPressed (const juce::KeyPress& key)
 {
-    for (const auto& binding : keyBindings())
+    // The keymap of this view: a key runs a command or a project action. Contextual, user-editable
+    // keymaps replace this table in M3.
+    using K = juce::KeyPress;
+    using M = juce::ModifierKeys;
+    const auto cmd = M::commandModifier, shift = M::shiftModifier;
+
+    struct Binding
+    {
+        K key;
+        std::function<void()> action;
+    };
+    const std::array<Binding, 11> bindings { {
+        { K (K::spaceKey), [this] { run ("transport.toggle"); } },
+        { K ('t'), [this] { run ("ui.theme.toggle"); } },
+        { K ('z', cmd, 0), [this] { run ("edit.undo"); } },
+        { K ('z', cmd | shift, 0), [this] { run ("edit.redo"); } },
+        { K ('y', cmd, 0), [this] { run ("edit.redo"); } },
+        { K ('s', cmd, 0), [this] { actions.save(); } },
+        { K ('s', cmd | shift, 0), [this] { actions.saveAs(); } },
+        { K ('o', cmd, 0), [this] { actions.openProject(); } },
+        { K ('n', cmd, 0), [this] { actions.newProject(); } },
+        { K (K::pageUpKey), [this] { selectPattern (shown.selected - 1); } },
+        { K (K::pageDownKey), [this] { selectPattern (shown.selected + 1); } },
+    } };
+
+    for (const auto& binding : bindings)
     {
         if (binding.key == key)
         {
-            run (binding.command);
+            binding.action();
             timerCallback();
             return true;
         }

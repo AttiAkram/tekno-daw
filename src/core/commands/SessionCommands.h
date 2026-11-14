@@ -13,9 +13,13 @@
 
 namespace tekno::core
 {
-/** Registers every command that acts on a Session: transport, pattern, synth, undo/redo.
+/** Registers every command that acts on a Session: transport, patterns, synth, project files and
+    undo/redo. Pattern commands act on the selected pattern.
 
-    Undoable: pattern edits. Not undoable (yet): transport, tempo and synth knobs, because a knob drag
-    produces dozens of changes and history merging does not exist yet. */
+    Undoable: pattern edits. Not undoable (yet): transport, tempo, swing and synth knobs, because a
+    knob drag produces dozens of changes and history merging does not exist yet.
+
+    Project commands never ask questions (unsaved changes, overwrite): asking is the job of the
+    caller (the UI today, a terminal or remote client tomorrow). */
 void registerSessionCommands (CommandRegistry& registry, Session& session);
 } // namespace tekno::core

@@ -14,7 +14,7 @@
 
 namespace tekno::core
 {
-/** Renders `bars` bars of the session's pattern to a 24-bit stereo WAV, plus a short tail, with no
+/** Renders `bars` loops of the selected pattern to a 24-bit stereo WAV, plus a short tail, with no
     audio device. Uses its own engine, so it must not run while a device is playing this session:
     it starts and stops the session's transport. */
 juce::Result renderToWav (Session& session, const juce::File& file, int bars, double sampleRate = 48000.0);

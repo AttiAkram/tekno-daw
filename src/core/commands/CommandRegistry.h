@@ -26,6 +26,7 @@ struct CommandParam
         integer,
         number,
         boolean,
+        text,
     };
 
     juce::String name;
@@ -53,6 +54,7 @@ struct CommandDefinition
     juce::String description; // one line, for the terminal, help and remote clients
     std::vector<CommandParam> params;
     std::function<CommandOutcome (const CommandArgs&)> run;
+    bool modifiesProject = false; // true when its effect is saved in the project file
 };
 
 /** The single entry point for every action that changes the DAW (ADR 0014). Mouse, keyboard,
@@ -73,6 +75,17 @@ public:
     /** Validates the arguments against the definition, then runs the command. */
     CommandOutcome execute (const juce::String& id, const CommandArgs& args = {});
 
+    /** Called after every successful change to the project: a command with modifiesProject, or an
+        undo/redo of one. The session uses it to know there are unsaved changes. */
+    std::function<void()> onProjectModified;
+
+    /** Forget undo/redo history, e.g. after opening another project. */
+    void clearHistory() noexcept
+    {
+        undoStack.clear();
+        redoStack.clear();
+    }
+
     bool canUndo() const noexcept { return ! undoStack.empty(); }
     bool canRedo() const noexcept { return ! redoStack.empty(); }
     bool undo();
@@ -88,6 +101,7 @@ private:
 
     static juce::String validate (const CommandDefinition&, const CommandArgs&);
     void pushUndo (HistoryEntry entry);
+    void notifyModified (const juce::String& id);
 
     std::map<juce::String, CommandDefinition> commands;
     std::vector<HistoryEntry> undoStack, redoStack;

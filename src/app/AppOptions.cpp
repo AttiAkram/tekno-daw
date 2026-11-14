@@ -40,6 +40,8 @@ AppOptions AppOptions::parse (const juce::StringArray& arguments)
             options.theme = ui::tokens::Theme::dark;
         else if (arg == "--theme=light")
             options.theme = ui::tokens::Theme::light;
+        else if (! arg.startsWith ("-") && arg.endsWithIgnoreCase (".tekno"))
+            options.project = juce::File::getCurrentWorkingDirectory().getChildFile (arg);
         else
             options.errors.add ("unknown argument: " + arg);
     }
@@ -49,7 +51,7 @@ AppOptions AppOptions::parse (const juce::StringArray& arguments)
 
 juce::String AppOptions::helpText()
 {
-    return "usage: tekno-daw [options]\n"
+    return "usage: tekno-daw [options] [project.tekno]\n"
            "  --theme=dark|light   start with this theme\n"
            "  --snapshot=<file>    render the main window to a PNG and exit\n"
            "  --render=<file.wav>  render the pattern to a WAV (no window, no audio device) and exit\n"

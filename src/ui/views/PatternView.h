@@ -15,6 +15,7 @@
 
 #include "core/commands/CommandRegistry.h"
 #include "core/model/Session.h"
+#include "ui/ProjectActions.h"
 #include "ui/components/ValueChip.h"
 #include "ui/theme/TeknoLookAndFeel.h"
 
@@ -30,15 +31,16 @@ struct AudioStatus
     juce::String problem; // why there is no audio, when not running
 };
 
-/** The main screen of M1: transport, the 303's controls and its 16-step pattern.
+/** The main screen: transport, project, the 303's controls, the pattern bank and the step grid.
 
-    The view never changes the model directly: every edit is a command (ADR 0014). It reads the
-    shared Session (atomics) on a timer, so what it shows is what the audio thread is playing. */
+    The view never changes the model directly: every edit is a command (ADR 0014), and file dialogs go
+    through ProjectActions. It reads the shared Session (atomics) on a timer, so what it shows is what
+    the audio thread is playing. */
 class PatternView final : public juce::Component, private juce::Timer
 {
 public:
     PatternView (TeknoLookAndFeel& lookAndFeel, core::Session& session, core::CommandRegistry& commands,
-                 std::function<AudioStatus()> audioStatus);
+                 ProjectActions& projectActions, std::function<AudioStatus()> audioStatus);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -46,7 +48,11 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+
+    static constexpr int stepsPerRow = 16;
+    static constexpr int maxRows = core::Pattern::maxSteps / stepsPerRow;
 
 private:
     struct Knob
@@ -61,11 +67,17 @@ private:
     /** Everything on screen that comes from the Session, to repaint only when something changed. */
     struct Snapshot
     {
-        std::array<std::uint32_t, core::Pattern::numSteps> steps {};
+        std::array<std::uint32_t, core::Pattern::maxSteps> steps {};
+        int length = 0;
+        int selected = 0;
+        int playingPattern = 0;
+        std::uint32_t usedPatterns = 0; // bit per pattern that holds something
         int currentStep = -1;
         bool playing = false;
         double bpm = 0.0;
+        float swing = 0.0f;
         bool square = false;
+        juce::String patternName, documentTitle;
 
         bool operator== (const Snapshot&) const = default;
     };
@@ -74,6 +86,11 @@ private:
     Snapshot takeSnapshot() const;
     void run (const juce::String& command, const core::CommandArgs& args = {});
     int stepAt (juce::Point<float> position) const;
+    int patternChipAt (juce::Point<float> position) const;
+    void selectPattern (int index);
+    void startRename();
+    void finishRename (bool keep);
+    void layoutSteps();
 
     void paintTopBar (juce::Graphics&) const;
     void paintLeftColumn (juce::Graphics&) const;
@@ -87,12 +104,15 @@ private:
     TeknoLookAndFeel& lnf;
     core::Session& session;
     core::CommandRegistry& commands;
+    ProjectActions& actions;
     std::function<AudioStatus()> audioStatus;
 
     std::array<juce::TextButton, 4> navButtons;
-    ValueChip bpmChip;
+    ValueChip swingChip, bpmChip, lengthChip;
     juce::TextButton playButton { "play" };
     juce::TextButton waveButton { "saw" };
+    juce::TextButton newButton { "new" }, openButton { "open" }, saveButton { "save" };
+    juce::TextEditor renameEditor;
     std::array<Knob, 5> knobs;
 
     Snapshot shown;
@@ -102,9 +122,11 @@ private:
 
     // Layout, computed in resized()
     juce::Rectangle<float> topBar, leftColumn, content;
-    juce::Rectangle<float> browserArea, synthArea, keysArea, audioArea;
-    juce::Rectangle<float> titleArea, metaArea, dividerArea, beatLabelArea, chipArea;
-    std::array<juce::Rectangle<float>, core::Pattern::numSteps> stepAreas;
+    juce::Rectangle<float> projectArea, synthArea, keysArea, audioArea;
+    juce::Rectangle<float> titleArea, metaArea, dividerArea, patternBarArea, gridArea, beatLabelArea, chipArea;
+    std::array<juce::Rectangle<float>, core::Session::maxPatterns> patternChips;
+    std::array<juce::Rectangle<float>, core::Pattern::maxSteps> stepAreas;
+    int laidOutLength = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PatternView)
 };

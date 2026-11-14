@@ -35,10 +35,17 @@ juce::Result renderToWav (Session& session, const juce::File& file, int bars, do
 
     AudioEngine engine (session);
     engine.prepare (sampleRate);
+    session.playing = session.selected.load();
 
     const auto bpm = session.transport.bpm.load();
-    const auto playSamples =
-        static_cast<juce::int64> (std::ceil (AudioEngine::samplesPerStep (sampleRate, bpm) * Pattern::numSteps * bars));
+    // Exactly `bars` loops of the selected pattern, swing included (odd lengths make swing uneven).
+    const auto& pattern = session.selectedPattern();
+    const auto straight = AudioEngine::samplesPerStep (sampleRate, bpm);
+    const auto swing = session.transport.swing.load();
+    double loopLength = 0.0;
+    for (int i = 0; i < pattern.getLength(); ++i)
+        loopLength += AudioEngine::swungStepLength (straight, swing, i);
+    const auto playSamples = static_cast<juce::int64> (std::ceil (loopLength * bars));
     const auto tailSamples = static_cast<juce::int64> (sampleRate * 0.5);
 
     constexpr int blockSize = 512;

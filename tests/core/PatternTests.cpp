@@ -28,20 +28,24 @@ TEST_CASE ("notes outside the playable range are clamped when stored", "[core][p
 TEST_CASE ("pattern ignores out-of-range steps", "[core][pattern]")
 {
     Pattern pattern;
-    pattern.setStep (16, Step { true });
+    pattern.setStep (Pattern::maxSteps, Step { true });
     pattern.setStep (-1, Step { true });
-    CHECK (pattern.getStep (16) == Step {});
-    for (int i = 0; i < Pattern::numSteps; ++i)
+    CHECK (pattern.getStep (Pattern::maxSteps) == Step {});
+    for (int i = 0; i < Pattern::maxSteps; ++i)
         CHECK_FALSE (pattern.getStep (i).on);
+    pattern.setLength (0);
+    CHECK (pattern.getLength() == 1);
+    pattern.setLength (100);
+    CHECK (pattern.getLength() == Pattern::maxSteps);
 }
 
 TEST_CASE ("the default session has a playable acid line", "[core][pattern]")
 {
     Session session;
     int on = 0, accents = 0, slides = 0;
-    for (int i = 0; i < Pattern::numSteps; ++i)
+    for (int i = 0; i < Pattern::defaultLength; ++i)
     {
-        const auto s = session.pattern.getStep (i);
+        const auto s = session.pattern (0).getStep (i);
         on += s.on ? 1 : 0;
         accents += s.accent ? 1 : 0;
         slides += s.slide ? 1 : 0;

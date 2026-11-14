@@ -12,7 +12,7 @@
 
 namespace tekno::core
 {
-/** One step of a 303-style pattern. Accent and slide are part of the step, not global settings:
+/** One step of a 303-style pattern. Accent, slide and tie are part of the step, not global settings:
     they are what makes an acid line move. */
 struct Step
 {
@@ -23,6 +23,7 @@ struct Step
     bool accent = false;
     bool slide = false; // keep the gate open and glide into the next step
     int note = 45;      // MIDI note number, A2
+    bool tie = false;   // don't play a new note: hold the previous one through this step
 
     /** Packs the step into 32 bits, so a whole step can be stored in one lock-free atomic. */
     std::uint32_t pack() const noexcept;

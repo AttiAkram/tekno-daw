@@ -6,6 +6,7 @@ add_executable(tekno_tests
     core/AudioEngineTests.cpp
     core/CommandTests.cpp
     core/PatternTests.cpp
+    core/ProjectFileTests.cpp
     core/VersionTests.cpp
     ui/FontsTests.cpp
     ui/PaletteTests.cpp

@@ -27,7 +27,7 @@ TEST_CASE ("unknown commands and bad arguments are rejected with a reason", "[co
     Fixture f;
     CHECK (f.registry.execute ("nope").error.contains ("unknown command"));
     CHECK (f.registry.execute ("pattern.step.toggle").error.contains ("missing argument"));
-    CHECK (f.registry.execute ("pattern.step.toggle", { { "step", 16 } }).error.contains ("between"));
+    CHECK (f.registry.execute ("pattern.step.toggle", { { "step", 64 } }).error.contains ("between"));
     CHECK (f.registry.execute ("pattern.step.toggle", { { "step", 2.5 } }).error.contains ("whole number"));
     CHECK (f.registry.execute ("pattern.step.toggle", { { "step", "x" } }).error.contains ("number"));
     CHECK (f.registry.execute ("pattern.step.toggle", { { "step", 1 }, { "extra", 1 } })
@@ -39,16 +39,16 @@ TEST_CASE ("unknown commands and bad arguments are rejected with a reason", "[co
 TEST_CASE ("pattern edits can be undone and redone", "[core][commands]")
 {
     Fixture f;
-    const auto original = f.session.pattern.getStep (1);
+    const auto original = f.session.pattern (0).getStep (1);
 
     REQUIRE (f.registry.execute ("pattern.step.toggle", { { "step", 1 } }).succeeded());
-    CHECK (f.session.pattern.getStep (1).on != original.on);
+    CHECK (f.session.pattern (0).getStep (1).on != original.on);
 
     REQUIRE (f.registry.execute ("edit.undo").succeeded());
-    CHECK (f.session.pattern.getStep (1) == original);
+    CHECK (f.session.pattern (0).getStep (1) == original);
 
     REQUIRE (f.registry.execute ("edit.redo").succeeded());
-    CHECK (f.session.pattern.getStep (1).on != original.on);
+    CHECK (f.session.pattern (0).getStep (1).on != original.on);
 }
 
 TEST_CASE ("a new edit clears the redo history", "[core][commands]")
@@ -67,15 +67,15 @@ TEST_CASE ("accent and slide turn a step on", "[core][commands]")
     f.registry.execute ("pattern.clear");
     f.registry.execute ("pattern.step.accent", { { "step", 5 }, { "on", true } });
     f.registry.execute ("pattern.step.slide", { { "step", 6 }, { "on", true } });
-    CHECK (f.session.pattern.getStep (5).on);
-    CHECK (f.session.pattern.getStep (5).accent);
-    CHECK (f.session.pattern.getStep (6).on);
-    CHECK (f.session.pattern.getStep (6).slide);
+    CHECK (f.session.pattern (0).getStep (5).on);
+    CHECK (f.session.pattern (0).getStep (5).accent);
+    CHECK (f.session.pattern (0).getStep (6).on);
+    CHECK (f.session.pattern (0).getStep (6).slide);
 
     f.registry.undo();
     f.registry.undo();
-    f.registry.undo();                        // the clear
-    CHECK (f.session.pattern.getStep (0).on); // the default line is back
+    f.registry.undo();                            // the clear
+    CHECK (f.session.pattern (0).getStep (0).on); // the default line is back
 }
 
 TEST_CASE ("transport and synth commands change the shared state but not the history", "[core][commands]")
@@ -105,4 +105,40 @@ TEST_CASE ("every command describes itself", "[core][commands]")
         if (i > 0)
             CHECK (all[i - 1]->id < all[i]->id);
     }
+}
+
+TEST_CASE ("pattern commands act on the selected pattern", "[core][commands]")
+{
+    Fixture f;
+    REQUIRE (f.registry.execute ("pattern.select", { { "pattern", 3 } }).succeeded());
+    CHECK (f.session.selected.load() == 2);
+    CHECK (f.session.playing.load() == 2); // stopped: immediate
+
+    f.registry.execute ("pattern.step.toggle", { { "step", 40 } });
+    f.registry.execute ("pattern.length", { { "steps", 48 } });
+    f.registry.execute ("pattern.rename", { { "name", "  rumble  " } });
+    CHECK (f.session.pattern (2).getStep (40).on);
+    CHECK (f.session.pattern (2).getLength() == 48);
+    CHECK (f.session.project.patternNames[2] == "rumble");
+    CHECK_FALSE (f.session.pattern (0).getStep (40).on);
+
+    f.registry.execute ("pattern.select", { { "pattern", 1 } });
+    f.registry.undo(); // undoes the rename on pattern 3, even though pattern 1 is selected now
+    CHECK (f.session.project.patternNames[2] == "pattern 3");
+
+    CHECK (f.registry.execute ("pattern.rename", { { "name", "   " } }).error.contains ("needs a name"));
+    CHECK (f.registry.execute ("pattern.length", { { "steps", 65 } }).error.isNotEmpty());
+    CHECK (f.registry.execute ("pattern.select", { { "pattern", 17 } }).error.isNotEmpty());
+    CHECK (f.registry.execute ("pattern.rename", { { "name", 5 } }).error.contains ("text"));
+}
+
+TEST_CASE ("tie and swing commands", "[core][commands]")
+{
+    Fixture f;
+    f.registry.execute ("pattern.step.tie", { { "step", 1 }, { "on", true } });
+    CHECK (f.session.pattern (0).getStep (1).tie);
+    CHECK (f.session.pattern (0).getStep (1).on);
+    f.registry.execute ("transport.swing", { { "percent", 66 } });
+    CHECK (f.session.transport.swing.load() == 66.0f);
+    CHECK (f.registry.execute ("transport.swing", { { "percent", 80 } }).error.isNotEmpty());
 }

@@ -10,25 +10,63 @@
 
 namespace tekno::core
 {
-Session::Session()
+void AcidParams::reset() noexcept
 {
-    loadDefaultPattern();
+    cutoff = defaultCutoff;
+    resonance = defaultResonance;
+    envMod = defaultEnvMod;
+    decay = defaultDecay;
+    accent = defaultAccent;
+    square = false;
 }
 
-void Session::loadDefaultPattern() noexcept
+Session::Session()
 {
-    // A minor acid line: A2 root with octave jumps, accents on the off-beats, three slides.
-    constexpr int A2 = 45, C3 = 48, D3 = 50, E3 = 52, G3 = 55, A3 = 57;
-    const Step line[Pattern::numSteps] = {
-        { true, true, false, A2 },   { false, false, false, A2 }, { true, false, true, A3 },
-        { true, false, false, A2 },  { true, false, false, C3 },  { false, false, false, A2 },
-        { true, true, false, A2 },   { true, false, true, E3 },   { true, false, false, G3 },
-        { false, false, false, A2 }, { true, false, false, A2 },  { true, true, true, A3 },
-        { false, false, false, A2 }, { true, false, false, D3 },  { true, false, true, A2 },
-        { true, false, false, A3 },
-    };
+    loadDefaultProject();
+}
 
-    for (int i = 0; i < Pattern::numSteps; ++i)
-        pattern.setStep (i, line[i]);
+void Session::loadDefaultProject()
+{
+    transport.playing = false;
+    transport.bpm = TransportState::defaultBpm;
+    transport.swing = TransportState::minSwing;
+    synth.reset();
+
+    for (int i = 0; i < maxPatterns; ++i)
+    {
+        pattern (i).clear();
+        project.patternNames[static_cast<size_t> (i)] = defaultPatternName (i);
+    }
+    project.patternNames[0] = "acid 01";
+    selected = 0;
+    playing = 0;
+
+    // A minor acid line: A2 root with octave jumps, accents on the off-beats, slides into the jumps.
+    constexpr int A2 = 45, C3 = 48, D3 = 50, E3 = 52, G3 = 55, A3 = 57;
+    auto on = [] (int note, bool accent = false, bool slide = false) { return Step { true, accent, slide, note }; };
+    const Step off { false, false, false, A2 };
+    const Step line[Pattern::defaultLength] = {
+        on (A2, true),
+        off,
+        on (A3, false, true),
+        on (A2),
+        on (C3),
+        off,
+        on (A2, true),
+        on (E3, false, true),
+        on (G3),
+        off,
+        on (A2),
+        on (A3, true, true),
+        off,
+        on (D3),
+        on (A2, false, true),
+        on (A3),
+    };
+    for (int i = 0; i < Pattern::defaultLength; ++i)
+        patterns[0].setStep (i, line[i]);
+
+    project.file = juce::File();
+    project.revision = project.savedRevision = 0;
 }
 } // namespace tekno::core

@@ -18,6 +18,7 @@
 #include "core/engine/AudioEngine.h"
 #include "core/engine/OfflineRender.h"
 #include "core/model/Session.h"
+#include "ui/ProjectActions.h"
 #include "ui/theme/TeknoLookAndFeel.h"
 #include "ui/views/PatternView.h"
 
@@ -47,6 +48,19 @@ public:
             exitEarly (0);
             return;
         }
+        core::registerSessionCommands (commands, session);
+
+        if (options.project != juce::File())
+        {
+            const auto opened = commands.execute ("project.open", { { "path", options.project.getFullPathName() } });
+            if (! opened.succeeded())
+            {
+                std::cerr << opened.error << "\n";
+                exitEarly (1);
+                return;
+            }
+        }
+
         if (options.render != juce::File())
         {
             const auto result = core::renderToWav (session, options.render, options.bars);
@@ -60,7 +74,7 @@ public:
 
         juce::Logger::writeToLog (core::buildDescription());
 
-        core::registerSessionCommands (commands, session);
+        projectActions = std::make_unique<ui::ProjectActions> (session, commands);
 
         lookAndFeel = std::make_unique<ui::TeknoLookAndFeel> (options.theme);
         juce::LookAndFeel::setDefaultLookAndFeel (lookAndFeel.get());
@@ -71,9 +85,10 @@ public:
         else
             startAudio();
 
-        mainWindow = std::make_unique<MainWindow> (
-            getApplicationName(), *lookAndFeel,
-            std::make_unique<ui::PatternView> (*lookAndFeel, session, commands, [this] { return audioStatus(); }));
+        mainWindow = std::make_unique<MainWindow> (getApplicationName(), *lookAndFeel,
+                                                   std::make_unique<ui::PatternView> (*lookAndFeel, session, commands,
+                                                                                      *projectActions, [this]
+                                                                                      { return audioStatus(); }));
 
         if (options.snapshot != juce::File())
             juce::Timer::callAfterDelay (750, [this, file = options.snapshot] { writeSnapshotAndQuit (file); });
@@ -92,11 +107,18 @@ public:
             deviceManager.reset();
         }
         mainWindow.reset();
+        projectActions.reset();
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
         lookAndFeel.reset();
     }
 
-    void systemRequestedQuit() override { quit(); }
+    void systemRequestedQuit() override
+    {
+        if (projectActions != nullptr)
+            projectActions->confirmDiscard ([this] { quit(); });
+        else
+            quit();
+    }
 
     void anotherInstanceStarted (const juce::String&) override {}
 
@@ -189,6 +211,7 @@ private:
     std::unique_ptr<juce::AudioDeviceManager> deviceManager;
     juce::String audioProblem;
 
+    std::unique_ptr<ui::ProjectActions> projectActions;
     std::unique_ptr<ui::TeknoLookAndFeel> lookAndFeel;
     std::unique_ptr<MainWindow> mainWindow;
 };

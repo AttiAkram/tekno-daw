@@ -55,10 +55,10 @@ float peak (const std::vector<float>& x)
 
 void onlySteps (Session& s, std::initializer_list<int> on, bool accent = false)
 {
-    for (int i = 0; i < Pattern::numSteps; ++i)
-        s.pattern.setStep (i, Step { false, false, false, 45 });
+    for (int i = 0; i < Pattern::defaultLength; ++i)
+        s.pattern (0).setStep (i, Step { false, false, false, 45 });
     for (auto i : on)
-        s.pattern.setStep (i, Step { true, accent, false, 45 });
+        s.pattern (0).setStep (i, Step { true, accent, false, 45 });
 }
 } // namespace
 
@@ -183,4 +183,70 @@ TEST_CASE ("offline render writes a WAV of the right length", "[core][engine]")
     CHECK (reader->bitsPerSample == 24);
     CHECK (reader->lengthInSamples == 6000 * 32 + 24000); // 2 bars + 0.5 s tail
     file.deleteFile();
+}
+
+TEST_CASE ("an odd pattern length wraps on its own length", "[core][engine]")
+{
+    Session session;
+    session.transport.bpm = 120.0; // 6000 samples per step
+    onlySteps (session, { 0 });
+    session.pattern (0).setLength (3);
+    session.transport.playing = true;
+    const auto out = render (session, 6000 * 3 + 2000);
+    CHECK (rms (out, 18000, 18480) > 0.005); // step 0 again after 3 steps, not 16
+    CHECK (rms (out, 17000, 18000) < 1e-4);
+}
+
+TEST_CASE ("swing delays the off-beat 16ths by the exact amount", "[core][engine]")
+{
+    Session session;
+    session.transport.bpm = 120.0;
+    session.transport.swing = 66.0f; // first 16th of each pair: 66% of 12000 = 7920 samples
+    onlySteps (session, { 0, 1 });
+    session.transport.playing = true;
+    const auto out = render (session, 9000);
+    size_t firstLoud = 7000;
+    while (firstLoud < out.size() && std::abs (out[firstLoud]) < 1e-3f)
+        ++firstLoud;
+    CHECK (firstLoud >= 7920);
+    CHECK (firstLoud < 7920 + 48);
+}
+
+TEST_CASE ("a tie holds the note without a new attack", "[core][engine]")
+{
+    auto levelAcrossBoundary = [] (bool tie)
+    {
+        Session s;
+        s.transport.bpm = 120.0;
+        onlySteps (s, { 0 });
+        s.pattern (0).setStep (1, Step { true, false, false, 45, tie });
+        s.transport.playing = true;
+        const auto out = render (s, 12000);
+        return rms (out, 5000, 6000); // the end of step 0: released without a tie, still sounding with it
+    };
+    CHECK (levelAcrossBoundary (true) > 0.02);
+    CHECK (levelAcrossBoundary (false) < 1e-3);
+}
+
+TEST_CASE ("a newly selected pattern starts at the next bar, not mid-pattern", "[core][engine]")
+{
+    Session session;
+    session.transport.bpm = 120.0;
+    onlySteps (session, { 0, 1, 2, 3, 4, 5, 6, 7 });
+    session.pattern (1).setLength (4);
+    session.transport.playing = true;
+
+    AudioEngine engine (session);
+    engine.prepare (48000.0);
+    std::vector<float> out (6000 * 20);
+    float* ch = out.data();
+    engine.render (&ch, 1, 6000 * 2); // two steps into pattern 1
+    session.selected = 1;             // the user picks pattern 2
+    ch = out.data() + 6000 * 2;
+    engine.render (&ch, 1, 6000 * 13);
+    CHECK (session.playing.load() == 0); // still pattern 1 at step 14
+    ch = out.data() + 6000 * 15;
+    engine.render (&ch, 1, 6000 * 2);
+    CHECK (session.playing.load() == 1);               // switched on the wrap...
+    CHECK (session.transport.currentStep.load() == 0); // ...and started from its first step
 }
