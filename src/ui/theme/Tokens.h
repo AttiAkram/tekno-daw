@@ -11,7 +11,7 @@
 #include <cstdint>
 
 // Design tokens: the ONLY place in the code base where colours, font sizes, radii, spacing and
-// durations are written down (ADR 0007). Components read from here and never hard-code values.
+// durations are written down. Components read from here and never hard-code values.
 // Change values here only together with the design spec they implement.
 //
 // Pure data on purpose: no JUCE types, so it can be read by tests, tools and a future web client.

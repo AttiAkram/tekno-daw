@@ -6,7 +6,7 @@
 // GNU Affero General Public License as published by the Free Software Foundation, either version 3
 // of the License, or (at your option) any later version. See the LICENSE file for details.
 
-// The palette is a design decision (ADR 0007) with measurable properties. These tests keep a future
+// The palette is a design decision with measurable properties. These tests keep a future
 // "small tweak" to a colour from silently breaking readability.
 
 #include <catch2/catch_test_macros.hpp>

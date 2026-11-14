@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Toolchain speed-ups and per-target compiler options. See ADR 0010.
+# Toolchain speed-ups and per-target compiler options.
 
 # --- compiler cache: free 5-10x on rebuilds after a clean or a branch switch -------------------
 find_program(TEKNO_CCACHE ccache)

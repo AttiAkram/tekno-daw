@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Enforces the dependency direction of ADR 0011 (app -> ui -> core, never backwards).
+# Enforces the dependency direction between layers (app -> ui -> core, never backwards).
 # All targets share one JUCE library, so the compiler cannot stop src/core from including GUI
 # headers. This script does, and runs as a CTest test:  cmake -DSOURCE_DIR=<repo> -P <this file>
 

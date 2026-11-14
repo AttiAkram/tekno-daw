@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Fonts are embedded in the binary so the UI looks the same on every machine (ADR 0007).
+# Fonts are embedded in the binary so the UI looks the same on every machine.
 # All of them are SIL OFL 1.1: the licence files sit next to the fonts and must stay there.
 
 juce_add_binary_data(tekno_fonts

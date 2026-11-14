@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Third-party dependencies, pinned by version AND by SHA-256 (ADR 0003, ADR 0009).
+# Third-party dependencies, pinned by version AND by SHA-256.
 #
 # Archives are downloaded once into TEKNO_DEPS_CACHE and shared by every build directory, so a
 # new preset or a clean build does not download anything again and works offline afterwards.
@@ -12,7 +12,7 @@ include(FetchContent)
 set(TEKNO_DEPS_CACHE "${PROJECT_SOURCE_DIR}/.cache/deps" CACHE PATH
     "Directory where downloaded dependency archives are kept (shared by all build dirs)")
 
-# Bumping any of these is a decision: record it as an ADR first.
+# Bumping any of these is a decision: write down why, and check the license, first.
 set(TEKNO_JUCE_VERSION   "9.0.5")
 set(TEKNO_JUCE_SHA256    "d92207f51ba728d3d195b6d5e93ecd049717a915fc250ff6844c32ea7272315a")
 set(TEKNO_CATCH2_VERSION "3.16.1")

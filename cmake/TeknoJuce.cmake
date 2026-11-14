@@ -5,7 +5,7 @@
 # JUCE modules are CMake INTERFACE libraries: each target linking one compiles the module's
 # sources again. Two of our libraries linking JUCE directly would put two copies of JUCE in the
 # same executable. Instead every tekno target links `tekno_juce`, which is built once and shared
-# by the app, the tests and (later) the headless engine. See ADR 0011.
+# by the app, the tests and (later) the headless engine.
 
 add_library(tekno_juce STATIC)
 

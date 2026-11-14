@@ -19,7 +19,7 @@ namespace tekno::ui
 enum class Role
 {
     standard, // pill, 1px border, filled ink when on
-    primary,  // the yellow pill: play/record only (ADR 0007)
+    primary,  // the yellow pill: play/record only
     nav,      // text only, a dot under it when on
 };
 
@@ -27,7 +27,7 @@ void setRole (juce::Component& component, Role role);
 Role getRole (const juce::Component& component);
 
 /** The single LookAndFeel of the app. Every colour, font and size it uses comes from Tokens.h.
-    Flat on purpose: no gradients, no shadows (ADR 0007).
+    Flat on purpose: no gradients, no shadows.
 
     After setTheme(), call sendLookAndFeelChange() on the top-level component to repaint. */
 class TeknoLookAndFeel final : public juce::LookAndFeel_V4
