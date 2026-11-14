@@ -25,8 +25,8 @@ and project version history.
 | | Milestone |
 |---|---|
 | ✅ M0 | Foundations: build, tests, CI, visual theme, style preview |
-| ▶ M1 | MVP: an acid synth playing a 16-step pattern — implemented, being tested |
-| M2 | Real sequencer: patterns, accent / slide / tie, swing, project files |
+| ✅ M1 | MVP: an acid synth playing a 16-step pattern |
+| ▶ M2 | Real sequencer: patterns, accent / slide / tie, swing, project files |
 | M3 | Channel rack, mixer, piano roll, drum sampler |
 | M4 | VST3 hosting (out of process) and MIDI input |
 | M5 | Audio export, full project format, more import formats |

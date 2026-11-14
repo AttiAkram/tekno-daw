@@ -34,9 +34,19 @@ if(TEKNO_GUI_TESTS)
     # plugin keep global caches and are unloaded at exit, so LeakSanitizer reports them as leaks it
     # cannot even attribute (checked 2026-11-14: every block is allocated inside those libraries).
     # Our audio code is still covered under ASan by the engine unit tests, which call the same render().
+    #
+    # Elsewhere, the device is only opened where a Linux sound system exists: constructing JUCE's
+    # AudioDeviceManager also opens the ALSA MIDI sequencer, and without /dev/snd/seq (CI runners,
+    # containers) JUCE's Debug build asserts in juce_Midi_linux.cpp. Not our bug, and harmless in
+    # Release — but it would fail every window test on a machine with no sound hardware.
     set(gui_test_args "")
     if(TEKNO_SANITIZERS)
         set(gui_test_args --no-audio)
+    elseif(NOT EXISTS "/dev/snd/seq")
+        set(gui_test_args --no-audio)
+        message(STATUS "tekno: no ALSA sequencer here, window tests run with --no-audio")
+    else()
+        message(STATUS "tekno: window tests open the real audio device")
     endif()
 
     add_test(NAME app.smoke COMMAND tekno-daw --smoke-test ${gui_test_args})
