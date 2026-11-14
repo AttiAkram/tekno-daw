@@ -74,6 +74,16 @@ public:
 
         juce::Logger::writeToLog (core::buildDescription());
 
+        // Without a display (no X server, or no permission to use it) JUCE cannot create a window
+        // and crashes later; say why and stop here instead. --render above works without one.
+        if (juce::Desktop::getInstance().getDisplays().displays.isEmpty())
+        {
+            std::cerr << "tekno-daw: no display available (is DISPLAY set, and XAUTHORITY when on "
+                         "Wayland?). To make a WAV without a window use --render=<file>.\n";
+            exitEarly (1);
+            return;
+        }
+
         projectActions = std::make_unique<ui::ProjectActions> (session, commands);
 
         lookAndFeel = std::make_unique<ui::TeknoLookAndFeel> (options.theme);
