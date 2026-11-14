@@ -199,6 +199,7 @@ private:
     std::array<juce::TextButton, 4> snapButtons;
     juce::TextButton keyButton; // the project's key: opens a menu of roots and scales
     void showKeyMenu();
+    void showChannelMenu (int channel); // right-click on a channel's name
     View view = View::pattern;
     int renamingChannel = -1; // which name the rename editor is changing; -1 = the pattern's
     int dropChannel = -1;     // where a dragged file would go; -1 = no file over the window

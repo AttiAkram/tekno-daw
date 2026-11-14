@@ -113,6 +113,10 @@ private:
     float velocityBarX (size_t index) const noexcept; // notes starting together get bars side by side
     void hear (int pitch, int velocity);
     int lockedPitch (int pitch) const noexcept; // onto the scale when the lock is on
+    float ticksToPixels() const noexcept;
+    void scrollHorizontallyBy (float pixels);
+    void copySelection();
+    void paste();
 
     TeknoLookAndFeel& lnf;
     core::Session& session;
@@ -122,7 +126,10 @@ private:
     Snap snap = Snap::step;
     int newNoteLength = core::Note::ticksPerStep;
     float scrollY = 0.0f;
-    float rowHeight = 18.0f; // Ctrl+wheel zooms
+    float rowHeight = 18.0f;    // Ctrl+wheel zooms
+    float pixelsPerTick = 0.0f; // 0 = the whole pattern fits the width; Ctrl+Shift+wheel zooms
+    float scrollX = 0.0f;
+    std::vector<core::Note> clipboard; // Ctrl+C; inside the DAW only, so it crosses channels and patterns
     bool scaleLock = true;
     bool preview = true;
     int hoveredNote = -1; // index into shown.notes, under the mouse in the grid or the velocity lane

@@ -199,7 +199,8 @@ TEST_CASE ("version 3 files check their notes", "[core][project][notes]")
     Session s;
     REQUIRE (s.pattern (0).lane (4).setNotes ({ Note { 7, 13, 50, true, false } }));
     const auto text = tekno::core::io::project::toText (s);
-    CHECK (text.contains ("{ \"at\": 7, \"length\": 13, \"note\": \"D3\", \"accent\": true, \"slide\": false, \"velocity\": 100 }"));
+    CHECK (text.contains (
+        "{ \"at\": 7, \"length\": 13, \"note\": \"D3\", \"accent\": true, \"slide\": false, \"velocity\": 100 }"));
 
     Session reopened;
     REQUIRE (tekno::core::io::project::fromText (text, reopened).wasOk());
@@ -365,4 +366,59 @@ TEST_CASE ("several notes move, change and go together, as one undo step", "[cor
     CHECK (f.line ("notes.move \"96:C3\" by=-200 semitones=0").contains ("outside the pattern"));
     CHECK (f.line ("notes.remove \"hello\"").contains ("position:pitch"));
     CHECK (f.line ("note.add 0 C3 24 velocity=200").contains ("between"));
+}
+
+// --- lane tools and pasting: what the piano roll's menus and Ctrl+V run ---------------------------
+
+TEST_CASE ("notes.add pastes a phrase in one step", "[core][commands][notes]")
+{
+    Commands f;
+    const auto before = f.acid().size();
+    CHECK (f.line ("notes.add \"384:A2:24 408:Do3:12:90:a 420:E3:12:127:as\"").isEmpty());
+    const auto notes = f.acid();
+    REQUIRE (notes.size() == before + 3);
+    CHECK (has (notes, Note { 384, 24, 45 })); // past the 16 steps: kept (it plays when the pattern grows)
+    CHECK (has (notes, Note { 408, 12, 48, true, false, 90 }));
+    CHECK (has (notes, Note { 420, 12, 52, true, true, 127 }));
+    f.registry.undo();
+    CHECK (f.acid().size() == before);
+
+    CHECK (f.line ("notes.add \"0:A2\"").contains ("at:note:length"));
+    CHECK (f.line ("notes.add \"0:H2:24\"").contains ("is not a note"));
+    CHECK (f.line ("notes.add \"0:A2:24:300\"").contains ("is not a note"));
+}
+
+TEST_CASE ("lane.repeat stretches the first bar over the whole pattern", "[core][commands][notes]")
+{
+    Commands f;
+    f.session.pattern (0).setLength (64);
+    REQUIRE (f.line ("lane.repeat channel=1").isEmpty()); // the kick: 4 hits in bar 1
+    const auto kick = f.session.pattern (0).lane (0).notes();
+    REQUIRE (kick.size() == 16);
+    CHECK (kick.back().start == 15 * 4 * tps);
+
+    REQUIRE (f.line ("note.add 400 C4 24 channel=1").isEmpty()); // something in bar 2...
+    REQUIRE (f.line ("lane.repeat bars=2 channel=1").isEmpty()); // ...repeated with bar 1
+    CHECK (f.session.pattern (0).lane (0).notes().size() == 2 * (8 + 1));
+
+    f.session.pattern (0).setLength (16);
+    CHECK (f.line ("lane.repeat channel=1").contains ("not longer"));
+    CHECK (f.line ("lane.clear channel=1").isEmpty());
+    CHECK (f.session.pattern (0).lane (0).isBlank());
+}
+
+TEST_CASE ("lane.toscale puts stray notes on the key's scale", "[core][commands][scale]")
+{
+    Commands f; // A minor, from the default project
+    REQUIRE (f.line ("note.add 12 F#3 12").isEmpty());
+    REQUIRE (f.line ("note.add 36 C#3 12").isEmpty());
+    REQUIRE (f.line ("lane.toscale").isEmpty());
+    for (const auto& n : f.acid())
+        CHECK (f.session.project.key.contains (n.pitch));
+    CHECK (has (f.acid(), Note { 12, 12, 53 })); // F#3 -> F3
+    f.registry.undo();
+    CHECK (has (f.acid(), Note { 12, 12, 54 }));
+
+    REQUIRE (f.line ("key off").isEmpty());
+    CHECK (f.line ("lane.toscale").contains ("no key"));
 }

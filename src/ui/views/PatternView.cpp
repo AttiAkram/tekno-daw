@@ -523,6 +523,26 @@ void PatternView::resized()
     layoutRack();
 }
 
+void PatternView::showChannelMenu (int channel)
+{
+    const auto latin = core::getNoteNaming() == core::NoteNaming::latin;
+    const auto target = channel + 1;
+    const auto bars = shown.length / stepsPerPage;
+    juce::PopupMenu menu;
+    menu.addItem (latin ? "Ripeti la prima battuta fino alla fine" : "Repeat the first bar to the end", bars > 1, false,
+                  [this, target] { run ("lane.repeat", { { "bars", 1 }, { "channel", target } }); });
+    menu.addItem (latin ? "Ripeti le prime 2 battute fino alla fine" : "Repeat the first 2 bars to the end", bars > 2,
+                  false, [this, target] { run ("lane.repeat", { { "bars", 2 }, { "channel", target } }); });
+    menu.addItem (latin ? "Porta le note nella scala" : "Move the notes onto the scale", session.project.key.active(),
+                  false, [this, target] { run ("lane.toscale", { { "channel", target } }); });
+    menu.addItem (latin ? "Svuota la corsia" : "Clear the lane", true, false,
+                  [this, target] { run ("lane.clear", { { "channel", target } }); });
+    menu.addSeparator();
+    menu.addItem (latin ? "Rinomina" : "Rename", [this, channel] { startRename (channel); });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (
+        localAreaToGlobal (rows[static_cast<size_t> (channel)].pill.toNearestInt())));
+}
+
 void PatternView::showKeyMenu()
 {
     // Roots in the user's naming; scales by what they sound like. Choosing runs key.set.
@@ -554,6 +574,9 @@ void PatternView::showKeyMenu()
     menu.addSeparator();
     menu.addItem (latin ? "Nessuna tonalità (guida spenta)" : "No key (guide off)", true, ! current.active(),
                   [this] { run ("key.set", { { "key", "off" } }); });
+    menu.addItem (latin ? "Porta nella scala le note di questo canale" : "Move this channel's notes onto the scale",
+                  current.active(), false,
+                  [this] { run ("lane.toscale", { { "channel", session.selectedChannel.load() + 1 } }); });
     menu.addSeparator();
     const auto locked = pianoRoll.getScaleLock();
     menu.addItem (latin ? "Blocca le note sulla scala" : "Keep new notes on the scale", true, locked,
@@ -1237,6 +1260,8 @@ void PatternView::mouseDown (const juce::MouseEvent& e)
         return;
     case W::pill:
         selectChannel (hit.channel);
+        if (e.mods.isPopupMenu())
+            showChannelMenu (hit.channel);
         return;
     case W::mute:
         run ("mixer.mute", { { "on", ((shown.muted >> hit.channel) & 1u) == 0 }, { "channel", channelArg } });

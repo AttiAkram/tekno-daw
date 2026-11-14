@@ -144,7 +144,10 @@ void PianoRollView::timerCallback()
     }
     if (now.channel != shown.channel || now.pattern != shown.pattern)
         selection.clear();
+    const auto lengthChanged = now.length != shown.length;
     shown = now;
+    if (lengthChanged)
+        scrollHorizontallyBy (0.0f); // stay inside a shorter pattern
     std::erase_if (selection,
                    [this] (const std::pair<int, int>& key)
                    {
@@ -202,16 +205,27 @@ void PianoRollView::scrollBy (float pixels)
     repaint();
 }
 
+float PianoRollView::ticksToPixels() const noexcept
+{
+    const auto fit = grid.getWidth() / static_cast<float> (std::max (1, shown.length) * Note::ticksPerStep);
+    return std::max (fit, pixelsPerTick);
+}
+
 float PianoRollView::tickToX (double tick) const noexcept
 {
-    const auto ticks = std::max (1, shown.length) * Note::ticksPerStep;
-    return grid.getX() + static_cast<float> (tick / ticks) * grid.getWidth();
+    return grid.getX() + static_cast<float> (tick) * ticksToPixels() - scrollX;
 }
 
 double PianoRollView::xToTick (float x) const noexcept
 {
-    const auto ticks = std::max (1, shown.length) * Note::ticksPerStep;
-    return static_cast<double> ((x - grid.getX()) / grid.getWidth()) * ticks;
+    return static_cast<double> ((x - grid.getX() + scrollX) / ticksToPixels());
+}
+
+void PianoRollView::scrollHorizontallyBy (float pixels)
+{
+    const auto content = static_cast<float> (std::max (1, shown.length) * Note::ticksPerStep) * ticksToPixels();
+    scrollX = std::clamp (scrollX + pixels, 0.0f, std::max (0.0f, content - grid.getWidth()));
+    repaint();
 }
 
 float PianoRollView::pitchToY (int pitch) const noexcept
@@ -788,6 +802,23 @@ bool PianoRollView::keyPressed (const juce::KeyPress& key)
         repaint();
         return true;
     }
+    const auto command = juce::ModifierKeys::commandModifier;
+    if (key == juce::KeyPress ('c', command, 0) && ! selection.empty())
+    {
+        copySelection();
+        return true;
+    }
+    if (key == juce::KeyPress ('v', command, 0))
+    {
+        paste();
+        return true;
+    }
+    if (key == juce::KeyPress ('d', command, 0) && ! selection.empty()) // duplicate: copy and paste
+    {
+        copySelection();
+        paste();
+        return true;
+    }
     if (key == juce::KeyPress::escapeKey && ! selection.empty())
     {
         selection.clear();
@@ -799,15 +830,74 @@ bool PianoRollView::keyPressed (const juce::KeyPress& key)
 
 void PianoRollView::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
-    if (! e.mods.isCommandDown())
+    const auto command = e.mods.isCommandDown(), shift = e.mods.isShiftDown();
+    if (command && shift)
     {
-        scrollBy (-wheel.deltaY * rowHeight * 12.0f);
+        // Ctrl+Shift+wheel stretches time, keeping the tick under the mouse where it is.
+        const auto anchorTick = xToTick (e.position.x);
+        const auto fit = grid.getWidth() / static_cast<float> (std::max (1, shown.length) * Note::ticksPerStep);
+        const auto zoomed = ticksToPixels() * (wheel.deltaY > 0 ? 1.2f : 1.0f / 1.2f);
+        pixelsPerTick = zoomed <= fit * 1.01f ? 0.0f : std::min (zoomed, 10.0f); // back to "fit" at the bottom
+        scrollX = static_cast<float> (anchorTick) * ticksToPixels() - (e.position.x - grid.getX());
+        scrollHorizontallyBy (0.0f);
         return;
     }
-    // Ctrl+wheel zooms the rows, keeping the pitch under the mouse where it is.
-    const auto anchor = (e.position.y - grid.getY() + scrollY) / rowHeight;
-    rowHeight = std::clamp (rowHeight * (wheel.deltaY > 0 ? 1.15f : 1.0f / 1.15f), minRowHeight, maxRowHeight);
-    scrollY = anchor * rowHeight - (e.position.y - grid.getY());
-    scrollBy (0.0f);
+    if (command)
+    {
+        // Ctrl+wheel zooms the rows, keeping the pitch under the mouse where it is.
+        const auto anchor = (e.position.y - grid.getY() + scrollY) / rowHeight;
+        rowHeight = std::clamp (rowHeight * (wheel.deltaY > 0 ? 1.15f : 1.0f / 1.15f), minRowHeight, maxRowHeight);
+        scrollY = anchor * rowHeight - (e.position.y - grid.getY());
+        scrollBy (0.0f);
+        return;
+    }
+    if (shift || ! juce::exactlyEqual (wheel.deltaX, 0.0f)) // Shift+wheel, or a sideways swipe: along time
+    {
+        const auto delta = juce::exactlyEqual (wheel.deltaX, 0.0f) ? wheel.deltaY : wheel.deltaX;
+        scrollHorizontallyBy (-delta * grid.getWidth() * 0.25f);
+        return;
+    }
+    scrollBy (-wheel.deltaY * rowHeight * 12.0f);
+}
+
+void PianoRollView::copySelection()
+{
+    clipboard.clear();
+    for (const auto& n : shown.notes)
+        if (isSelected (n))
+            clipboard.push_back (n);
+}
+
+void PianoRollView::paste()
+{
+    if (clipboard.empty())
+        return;
+    // Right after the copied block, its length rounded up to the snap: Ctrl+V again continues the phrase.
+    auto first = clipboard.front().start, last = 0;
+    for (const auto& n : clipboard)
+        first = std::min (first, n.start), last = std::max (last, n.end());
+    const auto step = snapTicks (snap);
+    const auto span = std::max (step, (last - first + step - 1) / step * step);
+    const auto end = shown.length * Note::ticksPerStep;
+
+    juce::StringArray items;
+    std::vector<Note> pasted;
+    for (auto n : clipboard)
+    {
+        n.start += span;
+        if (n.start >= end)
+            continue;
+        pasted.push_back (n);
+        items.add (juce::String (n.start) + ":" + juce::String (n.pitch) + ":" + juce::String (n.length) + ":" +
+                   juce::String (n.velocity) + ":" + (n.accent ? "a" : "") + (n.slide ? "s" : ""));
+    }
+    if (pasted.empty())
+        return; // the pattern ends there
+    run ("notes.add", { { "notes", items.joinIntoString (" ") } });
+    clipboard = pasted;
+    selection.clear();
+    for (const auto& n : pasted)
+        selection.push_back ({ n.start, n.pitch });
+    repaint();
 }
 } // namespace tekno::ui

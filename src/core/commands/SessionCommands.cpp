@@ -684,6 +684,103 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
         true);
 
     add (
+        registry, "notes.add", "Add several notes at once: \"at:note:length[:velocity[:as]]\" (a = accent, s = slide)",
+        { { "notes", Type::text, 0, 0, "e.g. \"0:A2:24 24:C3:24:90:a\"" }, patternTarget, channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editLane (
+                session, args,
+                [&args] (std::vector<Note>& notes)
+                {
+                    auto tokens =
+                        juce::StringArray::fromTokens (args["notes"].toString().replaceCharacter (',', ' '), " ", "\"");
+                    tokens.removeEmptyStrings();
+                    if (tokens.isEmpty())
+                        return juce::String ("no notes given: write at:note:length, like 0:A2:24");
+                    for (const auto& token : tokens)
+                    {
+                        const auto parts = juce::StringArray::fromTokens (token, ":", "");
+                        const auto pitch = parts.size() >= 3 ? parseNoteName (parts[1]) : std::nullopt;
+                        const auto at = parts[0].getIntValue(), length = parts[2].getIntValue();
+                        const auto velocity = parts.size() >= 4 ? parts[3].getIntValue() : Note::defaultVelocity;
+                        const auto flags = parts.size() >= 5 ? parts[4].toLowerCase() : juce::String();
+                        const auto number = parts.size() >= 3 && parts[1].containsOnly ("0123456789")
+                                                ? std::optional<int> (parts[1].getIntValue())
+                                                : pitch;
+                        if (parts.size() < 3 || ! number || ! parts[0].containsOnly ("0123456789") ||
+                            ! parts[2].containsOnly ("0123456789") || at >= lastTick || length < 1 ||
+                            *number < Step::minNote || *number > Step::maxNote || velocity < 0 || velocity > 127)
+                            return "'" + token + "' is not a note: write at:note:length[:velocity[:as]]";
+                        notes.push_back ({ at, length > lastTick ? static_cast<int> (lastTick) : length, *number,
+                                           flags.containsChar ('a'), flags.containsChar ('s'), velocity });
+                    }
+                    return juce::String();
+                });
+        },
+        true);
+    add (
+        registry, "lane.repeat", "Copy the first bars of a lane to the end of the pattern",
+        { { "bars", Type::integer, 1, 3, "how many bars to repeat (default 1)", true }, patternTarget, channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            const auto lengthInTicks = session.pattern (patternArg (session, args)).lengthInTicks();
+            return editLane (
+                session, args,
+                [&args, lengthInTicks] (std::vector<Note>& notes)
+                {
+                    constexpr auto bar = Pattern::defaultLength * Note::ticksPerStep;
+                    const auto block = (args.contains ("bars") ? static_cast<int> (args["bars"]) : 1) * bar;
+                    if (block >= lengthInTicks)
+                        return juce::String ("the pattern is not longer than that: nothing to repeat into");
+                    std::vector<Note> first;
+                    for (const auto& n : notes)
+                        if (n.start < block)
+                            first.push_back (n);
+                    notes = first;
+                    for (auto offset = block; offset < lengthInTicks; offset += block)
+                        for (auto n : first)
+                            if (n.start + offset < lengthInTicks)
+                            {
+                                n.start += offset;
+                                notes.push_back (n);
+                            }
+                    return juce::String();
+                });
+        },
+        true);
+    add (
+        registry, "lane.clear", "Remove every note of a lane", { patternTarget, channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editLane (session, args,
+                             [] (std::vector<Note>& notes)
+                             {
+                                 notes.clear();
+                                 return juce::String();
+                             });
+        },
+        true);
+    add (
+        registry, "lane.toscale", "Move every note outside the project's key to the nearest note of the scale",
+        { patternTarget, channelTarget },
+        [&session] (const CommandArgs& args)
+        {
+            const auto key = session.project.key;
+            if (! key.active())
+                return CommandOutcome::fail ("the project has no key: choose one first, e.g. key La minore");
+            return editLane (session, args,
+                             [key] (std::vector<Note>& notes)
+                             {
+                                 for (auto& n : notes)
+                                     n.pitch =
+                                         std::clamp (key.nearestInScale (n.pitch), static_cast<int> (Step::minNote),
+                                                     static_cast<int> (Step::maxNote));
+                                 return juce::String();
+                             });
+        },
+        true);
+
+    add (
         registry, "midi.import", "Put a melody from a MIDI file (.mid) into a lane, replacing its notes",
         { { "path", Type::text, 0, 0, "path of a .mid file" },
           { "track", Type::integer, 1, 128, "which track (default: the first with notes)", true },
