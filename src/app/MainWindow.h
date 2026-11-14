@@ -17,7 +17,8 @@ namespace tekno::app
 class MainWindow final : public juce::DocumentWindow
 {
 public:
-    MainWindow (const juce::String& name, ui::TeknoLookAndFeel& teknoLookAndFeel);
+    MainWindow (const juce::String& name, ui::TeknoLookAndFeel& teknoLookAndFeel,
+                std::unique_ptr<juce::Component> content);
 
     void closeButtonPressed() override;
     void lookAndFeelChanged() override;

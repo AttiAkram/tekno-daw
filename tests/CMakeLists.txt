@@ -3,6 +3,9 @@
 include(Catch)
 
 add_executable(tekno_tests
+    core/AudioEngineTests.cpp
+    core/CommandTests.cpp
+    core/PatternTests.cpp
     core/VersionTests.cpp
     ui/FontsTests.cpp
     ui/PaletteTests.cpp
@@ -27,9 +30,18 @@ add_test(NAME layering
 if(TEKNO_GUI_TESTS)
     set(juce_failures "Leaked objects detected|JUCE Assertion failure")
 
-    add_test(NAME app.smoke COMMAND tekno-daw --smoke-test)
-    add_test(NAME app.snapshot.dark  COMMAND tekno-daw --theme=dark  "--snapshot=${CMAKE_BINARY_DIR}/snapshots/preview-dark.png")
-    add_test(NAME app.snapshot.light COMMAND tekno-daw --theme=light "--snapshot=${CMAKE_BINARY_DIR}/snapshots/preview-light.png")
+    # Under sanitizers the window tests skip the audio device: pipewire-jack and the ALSA PipeWire
+    # plugin keep global caches and are unloaded at exit, so LeakSanitizer reports them as leaks it
+    # cannot even attribute (checked 2026-11-14: every block is allocated inside those libraries).
+    # Our audio code is still covered under ASan by the engine unit tests, which call the same render().
+    set(gui_test_args "")
+    if(TEKNO_SANITIZERS)
+        set(gui_test_args --no-audio)
+    endif()
+
+    add_test(NAME app.smoke COMMAND tekno-daw --smoke-test ${gui_test_args})
+    add_test(NAME app.snapshot.dark  COMMAND tekno-daw ${gui_test_args} --theme=dark  "--snapshot=${CMAKE_BINARY_DIR}/snapshots/pattern-dark.png")
+    add_test(NAME app.snapshot.light COMMAND tekno-daw ${gui_test_args} --theme=light "--snapshot=${CMAKE_BINARY_DIR}/snapshots/pattern-light.png")
 
     set_tests_properties(app.smoke app.snapshot.dark app.snapshot.light PROPERTIES
         TIMEOUT 30

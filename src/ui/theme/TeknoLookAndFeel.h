@@ -51,6 +51,8 @@ public:
                                bool isDown) override;
     void drawButtonText (juce::Graphics&, juce::TextButton&, bool isHighlighted, bool isDown) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
+    void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height, float position, float startAngle,
+                           float endAngle, juce::Slider&) override;
     juce::Font getLabelFont (juce::Label&) override;
     juce::Font getPopupMenuFont() override;
     juce::Typeface::Ptr getTypefaceForFont (const juce::Font&) override;

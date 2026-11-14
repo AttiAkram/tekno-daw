@@ -3,9 +3,9 @@
 An open source, pattern-based DAW for **acid / mental tekno** — built in the spirit of
 FL Studio's workflow, with a 303-style acid synth wired in from day one.
 
-> **Status: pre-alpha.** Milestone M0 is done: the build, test and CI foundations, the visual theme,
-> and a *non-functional* preview of the main screen (`src/ui/preview`). Nothing makes sound yet:
-> that is milestone M1 (see the roadmap below).
+> **Status: pre-alpha.** The built-in acid synth plays a 16-step pattern on your sound card: edit
+> steps, accents, slides and pitches while it plays, tweak the filter, undo your edits. Patterns
+> can't be saved yet (milestone M2, see the roadmap below).
 
 ## Goals
 
@@ -25,7 +25,7 @@ and project version history.
 | | Milestone |
 |---|---|
 | ✅ M0 | Foundations: build, tests, CI, visual theme, style preview |
-| ▶ M1 | MVP: an acid synth playing a 16-step pattern |
+| ▶ M1 | MVP: an acid synth playing a 16-step pattern — implemented, being tested |
 | M2 | Real sequencer: patterns, accent / slide / tie, swing, project files |
 | M3 | Channel rack, mixer, piano roll, drum sampler |
 | M4 | VST3 hosting (out of process) and MIDI input |
@@ -44,8 +44,15 @@ cmake --build --preset dev --target run
 The first configure downloads JUCE and Catch2 once (pinned version + SHA-256) into `.cache/deps/`;
 after that everything works offline. A full build takes about a minute on a 12-core machine.
 
-In the preview: **T** switches light/dark theme, **Space** runs a fake playhead, click a step to
-toggle it, **Shift+click** adds an accent, **Ctrl+click** a slide.
+| Key / mouse | Action |
+|---|---|
+| Space | play / stop |
+| Click a step | on / off |
+| Shift+click / Ctrl+click | accent / slide |
+| Wheel on a step | pitch (Shift: octave) |
+| Drag or wheel on the BPM pill | tempo (Shift: fine, double-click: 130) |
+| Ctrl+Z / Ctrl+Y | undo / redo pattern edits |
+| T | light / dark theme |
 
 ### Presets
 
@@ -58,7 +65,9 @@ toggle it, **Shift+click** adds an accent, **Ctrl+click** a slide.
 | `ci` | what CI runs: warnings are errors, window smoke test and UI snapshots |
 
 `cmake --workflow --preset <name>` runs configure, build and tests; `ctest --preset <name>` only tests.
-`ccache` and a fast linker (`mold`, else `lld`) are picked up automatically when installed.
+`ccache` and a fast linker (`mold`, else `lld`) are picked up automatically when installed. Parallel
+compile jobs are capped by RAM (half of it by default) so a build never pushes other programs out of
+memory; raise it with `-DTEKNO_BUILD_MEMORY_MB=<MB>`.
 
 ### Clean-room build in Docker
 
@@ -76,6 +85,8 @@ This installs only what `scripts/install-deps-ubuntu.sh` lists, then runs the `c
 ```
 tekno-daw --theme=dark|light   start with this theme
 tekno-daw --snapshot=out.png   render the main window to a PNG and exit
+tekno-daw --render=out.wav --bars=8   render the pattern to a WAV, no sound card needed
+tekno-daw --no-audio           start without opening an audio device
 tekno-daw --smoke-test         open the window and quit after a second
 tekno-daw --version
 ```

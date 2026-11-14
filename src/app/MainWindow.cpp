@@ -8,23 +8,22 @@
 
 #include "app/MainWindow.h"
 
-#include "ui/preview/StylePreview.h"
-
 namespace tekno::app
 {
-MainWindow::MainWindow (const juce::String& name, ui::TeknoLookAndFeel& teknoLookAndFeel)
+MainWindow::MainWindow (const juce::String& name, ui::TeknoLookAndFeel& teknoLookAndFeel,
+                        std::unique_ptr<juce::Component> content)
     : juce::DocumentWindow (name, teknoLookAndFeel.colour (&ui::tokens::Palette::bg), juce::DocumentWindow::allButtons)
     , lnf (teknoLookAndFeel)
 {
     setUsingNativeTitleBar (true); // the window manager (e.g. a tiling one) owns the frame
-    setContentOwned (new ui::StylePreview (lnf), false);
+    setContentOwned (content.release(), false);
     setResizable (true, false);
     setResizeLimits (1024, 640, 16384, 16384);
     centreWithSize (1440, 900);
     setVisible (true);
 
-    if (auto* content = getContentComponent())
-        content->grabKeyboardFocus();
+    if (auto* c = getContentComponent())
+        c->grabKeyboardFocus();
 }
 
 void MainWindow::closeButtonPressed()

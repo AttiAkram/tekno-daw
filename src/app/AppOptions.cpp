@@ -25,6 +25,17 @@ AppOptions AppOptions::parse (const juce::StringArray& arguments)
         else if (arg.startsWith ("--snapshot="))
             options.snapshot =
                 juce::File::getCurrentWorkingDirectory().getChildFile (arg.fromFirstOccurrenceOf ("=", false, false));
+        else if (arg.startsWith ("--render="))
+            options.render =
+                juce::File::getCurrentWorkingDirectory().getChildFile (arg.fromFirstOccurrenceOf ("=", false, false));
+        else if (arg.startsWith ("--bars="))
+        {
+            options.bars = arg.fromFirstOccurrenceOf ("=", false, false).getIntValue();
+            if (options.bars < 1 || options.bars > 64)
+                options.errors.add ("--bars must be between 1 and 64");
+        }
+        else if (arg == "--no-audio")
+            options.noAudio = true;
         else if (arg == "--theme=dark")
             options.theme = ui::tokens::Theme::dark;
         else if (arg == "--theme=light")
@@ -41,6 +52,9 @@ juce::String AppOptions::helpText()
     return "usage: tekno-daw [options]\n"
            "  --theme=dark|light   start with this theme\n"
            "  --snapshot=<file>    render the main window to a PNG and exit\n"
+           "  --render=<file.wav>  render the pattern to a WAV (no window, no audio device) and exit\n"
+           "  --bars=<n>           how many bars --render writes (default 4)\n"
+           "  --no-audio           start without opening an audio device\n"
            "  --smoke-test         open the window, quit after one second (used by tests)\n"
            "  --version            print the version and exit\n"
            "  --help               show this text\n";

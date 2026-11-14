@@ -23,6 +23,9 @@ struct AppOptions
     bool printHelp = false;                             // --help
     bool smokeTest = false;                             // --smoke-test       open the window, quit after a second
     juce::File snapshot;                                // --snapshot=<png>   render the main window to a PNG and quit
+    juce::File render;                                  // --render=<wav>     render the pattern, no window/device
+    int bars = 4;                                       // --bars=<1..64>     length of --render
+    bool noAudio = false;                               // --no-audio         don't open an audio device
     ui::tokens::Theme theme = ui::tokens::defaultTheme; // --theme=dark|light
     juce::StringArray errors;                           // unknown or malformed arguments
 

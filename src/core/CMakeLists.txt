@@ -3,7 +3,14 @@
 configure_file(BuildInfo.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/core/BuildInfo.h" @ONLY)
 
 add_library(tekno_core STATIC
-    Version.cpp)
+    Version.cpp
+    model/Pattern.cpp
+    model/Session.cpp
+    commands/CommandRegistry.cpp
+    commands/SessionCommands.cpp
+    dsp/AcidVoice.cpp
+    engine/AudioEngine.cpp
+    engine/OfflineRender.cpp)
 add_library(tekno::core ALIAS tekno_core)
 
 target_include_directories(tekno_core PUBLIC

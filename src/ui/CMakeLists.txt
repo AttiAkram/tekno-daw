@@ -5,7 +5,8 @@ add_library(tekno_ui STATIC
     theme/Fonts.cpp
     theme/TeknoLookAndFeel.cpp
     components/IconButton.cpp
-    preview/StylePreview.cpp)
+    components/ValueChip.cpp
+    views/PatternView.cpp)
 add_library(tekno::ui ALIAS tekno_ui)
 
 target_link_libraries(tekno_ui

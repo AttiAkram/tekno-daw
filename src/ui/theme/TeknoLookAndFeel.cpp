@@ -130,6 +130,29 @@ void TeknoLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& butt
                 false);
 }
 
+void TeknoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float position,
+                                         float startAngle, float endAngle, juce::Slider& slider)
+{
+    // A thin ring and the value as an ink arc: no 3D, no pointer, no gradient.
+    using P = tokens::Palette;
+    const auto size = static_cast<float> (juce::jmin (width, height));
+    const auto ring = juce::Rectangle<float> (static_cast<float> (x), static_cast<float> (y),
+                                              static_cast<float> (width), static_cast<float> (height))
+                          .withSizeKeepingCentre (size, size)
+                          .reduced (tokens::shape::lineWidth);
+    const auto active = slider.isMouseOverOrDragging();
+
+    g.setColour (active ? colour (&P::ink) : colour (&P::line));
+    g.drawEllipse (ring, tokens::shape::lineWidth);
+
+    const auto radius = ring.getWidth() * 0.5f - 4.0f;
+    juce::Path arc;
+    arc.addCentredArc (ring.getCentreX(), ring.getCentreY(), radius, radius, 0.0f, startAngle,
+                       startAngle + (endAngle - startAngle) * position, true);
+    g.setColour (colour (&P::ink));
+    g.strokePath (arc, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+}
+
 juce::Font TeknoLookAndFeel::getTextButtonFont (juce::TextButton&, int)
 {
     return typefaces.font (tokens::type::control);
