@@ -44,11 +44,11 @@ void makeInteresting (Session& s)
     s.channel (1).mixer.mute = true;
     s.channel (3).mixer.solo = true;
     s.project.channelNames[2] = "ride \"open\"";
-    s.pattern (0).lane (acid).setStep (5, Step { true, false, false, 61, true }); // a tie
-    s.pattern (0).lane (0).setStep (3, Step { true, true, false, 67 });           // a kick a fifth up
+    s.pattern (0).setStep (acid, 5, Step { true, false, false, 61, true }); // a tie
+    s.pattern (0).setStep (0, 3, Step { true, true, false, 67 });           // a kick a fifth up
     s.pattern (2).setLength (13);
-    s.pattern (2).lane (acid).setStep (12, Step { true, true, true, 96 });
-    s.pattern (2).lane (acid).setStep (40, Step { true, false, false, 24 }); // past the length: must survive
+    s.pattern (2).setStep (acid, 12, Step { true, true, true, 96 });
+    s.pattern (2).setStep (acid, 40, Step { true, false, false, 24 }); // past the length: must survive
     s.project.patternNames[2] = "rumble \"quoted\" / ünïcode";
     s.selected = 2;
 }
@@ -144,11 +144,12 @@ TEST_CASE ("the file is readable and diffable", "[core][project]")
     Session s;
     const auto text = project::toText (s);
     CHECK (text.contains ("\"format\": \"tekno-daw/project\""));
-    CHECK (text.contains ("\"version\": 2"));
+    CHECK (text.contains ("\"version\": 3"));
+    CHECK (text.contains ("\"ticksPerStep\": 24"));
     CHECK (text.contains ("\"sampler\": { \"sample\": \"builtin:kick\""));
     CHECK (text.contains ("\"name\": \"acid 01\""));
-    CHECK (text.contains ("{ \"on\": true, \"note\": \"A2\", \"accent\": true, \"slide\": false, \"tie\": false }"));
-    // one step per line, and only patterns that hold something
+    CHECK (text.contains ("{ \"at\": 0, \"length\": 24, \"note\": \"A2\", \"accent\": true, \"slide\": false }"));
+    // one note per line, and only patterns that hold something
     CHECK (juce::StringArray::fromLines (text).size() > 16);
     CHECK_FALSE (text.contains ("\"number\": 2"));
 }
@@ -162,13 +163,13 @@ TEST_CASE ("a broken file says where and leaves the session alone", "[core][proj
     auto broken = project::toText (Session {}).replace ("\"note\": \"A3\"", "\"note\": \"H3\"");
     auto result = project::fromText (broken, s);
     REQUIRE (result.failed());
-    CHECK (result.getErrorMessage().contains ("patterns[0].lanes[3].steps[2].note"));
+    CHECK (result.getErrorMessage().contains ("patterns[0].lanes[3].notes[1].note"));
     CHECK (result.getErrorMessage().contains ("H3"));
     CHECK (project::toText (s) == before);
 
     CHECK (project::fromText ("not json at all", s).failed());
     CHECK (project::fromText ("{ \"hello\": 1 }", s).getErrorMessage().contains ("not a tekno-daw project"));
-    CHECK (project::fromText (project::toText (s).replace ("\"version\": 2", "\"version\": 9"), s)
+    CHECK (project::fromText (project::toText (s).replace ("\"version\": 3", "\"version\": 9"), s)
                .getErrorMessage()
                .contains ("newer tekno-daw"));
     CHECK (project::fromText (project::toText (s).replace ("\"bpm\": 138.5", "\"bpm\": 9000"), s)
@@ -198,12 +199,12 @@ TEST_CASE ("a version 1 project from M2 still opens, as one acid channel", "[cor
     CHECK (s.selected.load() == 1);
     CHECK (s.project.patternNames[1] == "old line");
     CHECK (s.pattern (1).getLength() == 3);
-    CHECK (s.pattern (1).lane (0).getStep (0) == Step { true, true, false, 45 });
-    CHECK (s.pattern (1).lane (0).getStep (2).slide);
+    CHECK (s.pattern (1).getStep (0, 0) == Step { true, true, false, 45 });
+    CHECK (s.pattern (1).getStep (0, 2).slide);
 
-    // Saved again, it is a version 2 file that reads back the same.
+    // Saved again, it is a version 3 file that reads back the same.
     const auto text = project::toText (s);
-    CHECK (text.contains ("\"version\": 2"));
+    CHECK (text.contains ("\"version\": 3"));
     Session again;
     REQUIRE (project::fromText (text, again).wasOk());
     requireSame (s, again);
@@ -276,7 +277,7 @@ TEST_CASE ("project commands save, mark changes and open", "[core][project][comm
     CHECK (s.project.hasUnsavedChanges());
 
     REQUIRE (r.execute ("project.open", { { "path", file.getFullPathName() } }).succeeded());
-    CHECK (s.pattern (0).lane (s.selectedChannel).getStep (1).on); // the saved state, not the undone one
+    CHECK (s.pattern (0).getStep (s.selectedChannel, 1).on); // the saved state, not the undone one
     CHECK_FALSE (s.project.hasUnsavedChanges());
     CHECK_FALSE (r.canUndo()); // history belongs to the previous document
     CHECK_FALSE (s.transport.playing.load());

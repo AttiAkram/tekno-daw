@@ -23,7 +23,7 @@ struct Fixture
     /** A step of the acid channel (the selected one in the default project). */
     Step acidStep (int pattern, int index) const
     {
-        return session.pattern (pattern).lane (session.selectedChannel).getStep (index);
+        return session.pattern (pattern).getStep (session.selectedChannel, index);
     }
     AcidParams& acid() { return session.selectedChannelRef().acid; }
 };

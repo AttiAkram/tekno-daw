@@ -151,12 +151,16 @@ start.
 
 ## Project files
 
-Projects are `.tekno` files: plain JSON, written in a fixed order with one step per line and notes by
-name, so they are easy to read, edit by hand and compare between versions:
+Projects are `.tekno` files: plain JSON, written in a fixed order with one note per line and pitches
+by name, so they are easy to read, edit by hand and compare between versions. Time is in ticks, 24 per
+step (96 per beat), so 1/16, 1/32 and triplets are all whole numbers:
 
 ```json
-{ "on": true, "note": "A2", "accent": true, "slide": false, "tie": false },
+{ "at": 0, "length": 24, "note": "A2", "accent": true, "slide": false },
 ```
+
+The step sequencer is a view of these notes: a step is a note one step long on the grid, and ties are
+longer notes.
 
 Sample files inside the project's folder are stored relative to it, so the folder can be moved whole.
 A missing sample doesn't stop a project from opening: that channel stays silent and keeps its

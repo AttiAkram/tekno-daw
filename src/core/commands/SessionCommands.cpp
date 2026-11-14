@@ -82,8 +82,9 @@ namespace
         return outcome;
     }
 
-    /** Changes one step and returns how to put it back. */
-    CommandOutcome editStep (Session& session, const CommandArgs& args, const std::function<void (Step&)>& change)
+    /** Changes one step (through the step view of the lane) and returns how to put the lane back. */
+    CommandOutcome editStep (Session& session, const CommandArgs& args, const std::function<void (Step&)>& change,
+                             bool stepMustBeOn = false)
     {
         const auto target = channelArg (session, args);
         if (target.index < 0)
@@ -92,21 +93,23 @@ namespace
         const auto channel = target.index;
         const auto index = stepArg (args);
 
-        auto& lane = session.pattern (patternIndex).lane (channel);
-        const auto before = lane.getStep (index);
-        auto after = before;
+        auto& pattern = session.pattern (patternIndex);
+        const auto current = pattern.getStep (channel, index);
+        if (stepMustBeOn && ! current.on)
+            return CommandOutcome::fail ("step " + juce::String (index + 1) + " is off: turn it on first");
+
+        auto after = current;
         change (after);
+        // A step turned on starts at the instrument's own pitch: A2 for acid, C4 (the sample as it is) for drums.
+        if (! current.on && after.on)
+            after.note =
+                session.channel (channel).kind.load() == InstrumentKind::sampler ? Step::samplerRootNote : Step {}.note;
 
-        // A sampler plays its sample at its own pitch on C4: an untouched step turned on starts there.
-        if (! before.on && after.on && before == Step {} &&
-            session.channel (channel).kind.load() == InstrumentKind::sampler)
-            after.note = Step::samplerRootNote;
-
-        lane.setStep (index, after);
-        return withTargets (
-            CommandOutcome::ok ([&session, patternIndex, channel, index, before]
-                                { session.pattern (patternIndex).lane (channel).setStep (index, before); }),
-            args, patternIndex, channel);
+        const auto before = pattern.lane (channel).notes();
+        pattern.setStep (channel, index, after);
+        return withTargets (CommandOutcome::ok ([&session, patternIndex, channel, before]
+                                                { session.pattern (patternIndex).lane (channel).setNotes (before); }),
+                            args, patternIndex, channel);
     }
 
     /** Sets an atomic and returns how to put the old value back. */
@@ -276,27 +279,22 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
         },
         true);
     add (
-        registry, "pattern.clear", "Turn every step of a pattern off, in every channel", { patternTarget },
+        registry, "pattern.clear", "Remove every note of a pattern, in every channel", { patternTarget },
         [&session] (const CommandArgs& args)
         {
             const auto index = patternArg (session, args);
             auto& pattern = session.pattern (index);
-            std::array<std::array<Step, Pattern::maxSteps>, Session::maxChannels> before;
+            std::array<std::vector<Note>, Session::maxChannels> before;
             for (int c = 0; c < Session::maxChannels; ++c)
-                for (int s = 0; s < Pattern::maxSteps; ++s)
-                {
-                    auto step = pattern.lane (c).getStep (s);
-                    before[static_cast<size_t> (c)][static_cast<size_t> (s)] = step;
-                    step.on = false;
-                    pattern.lane (c).setStep (s, step);
-                }
+            {
+                before[static_cast<size_t> (c)] = pattern.lane (c).notes();
+                pattern.lane (c).clear();
+            }
             return withTargets (CommandOutcome::ok (
                                     [&pattern, before]
                                     {
                                         for (int c = 0; c < Session::maxChannels; ++c)
-                                            for (int s = 0; s < Pattern::maxSteps; ++s)
-                                                pattern.lane (c).setStep (
-                                                    s, before[static_cast<size_t> (c)][static_cast<size_t> (s)]);
+                                            pattern.lane (c).setNotes (before[static_cast<size_t> (c)]);
                                     }),
                                 args, index, -1);
         },
@@ -358,7 +356,7 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
         [&session] (const CommandArgs& args)
         {
             const int note = args["note"];
-            return editStep (session, args, [note] (Step& s) { s.note = note; });
+            return editStep (session, args, [note] (Step& s) { s.note = note; }, true);
         },
         true);
 

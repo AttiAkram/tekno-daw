@@ -12,6 +12,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <vector>
 
 #include <juce_core/juce_core.h>
 
@@ -56,7 +57,7 @@ struct ChannelData
     AcidSettings acid;
     SamplerSettings sampler;
     MixerSettings mixer;
-    std::array<std::array<Step, Pattern::maxSteps>, 16> lanes {}; // [pattern][step]
+    std::array<std::vector<Note>, 16> lanes {}; // the channel's notes in each pattern
 };
 
 /** Facts about the project as a document. Message thread only: the audio thread never touches it. */

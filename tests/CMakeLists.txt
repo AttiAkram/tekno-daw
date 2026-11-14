@@ -8,6 +8,7 @@ add_executable(tekno_tests
     core/CommandLineTests.cpp
     core/CommandTests.cpp
     core/DriveTests.cpp
+    core/NoteTests.cpp
     core/PatternTests.cpp
     core/ProjectFileTests.cpp
     core/VersionTests.cpp

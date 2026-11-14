@@ -8,6 +8,7 @@
 
 #include "core/io/ProjectFile.h"
 
+#include <algorithm>
 #include <array>
 #include <vector>
 
@@ -38,11 +39,11 @@ namespace
         return value ? "true" : "false";
     }
 
-    juce::String stepLine (const Step& s)
+    juce::String noteLine (const Note& n)
     {
-        return "{ \"on\": " + boolean (s.on) + ", \"note\": " + quoted (noteName (s.note)) +
-               ", \"accent\": " + boolean (s.accent) + ", \"slide\": " + boolean (s.slide) +
-               ", \"tie\": " + boolean (s.tie) + " }";
+        return "{ \"at\": " + juce::String (n.start) + ", \"length\": " + juce::String (n.length) +
+               ", \"note\": " + quoted (noteName (n.pitch)) + ", \"accent\": " + boolean (n.accent) +
+               ", \"slide\": " + boolean (n.slide) + " }";
     }
 
     juce::String acidLine (const AcidSettings& a)
@@ -203,6 +204,40 @@ namespace
         }
     };
 
+    /** A version 3 list of notes, checked. */
+    std::vector<Note> readNotes (Reader& r, const juce::var& list, const juce::String& path)
+    {
+        std::vector<Note> out;
+        if (list.isVoid())
+            return out;
+        if (! list.isArray() || list.size() > Lane::maxNotes)
+        {
+            r.fail (path, "must be a list of at most " + juce::String (Lane::maxNotes) + " notes");
+            return out;
+        }
+        constexpr auto lastTick = Pattern::maxSteps * Note::ticksPerStep;
+        for (int i = 0; i < list.size() && r.ok(); ++i)
+        {
+            const auto n = list[i];
+            const auto notePath = path + "[" + juce::String (i) + "]";
+            Note note;
+            note.start = static_cast<int> (r.number (n, "at", notePath, 0, 0, lastTick - 1));
+            note.length = static_cast<int> (r.number (n, "length", notePath, Note::ticksPerStep, 1, lastTick));
+            note.accent = r.boolean (n, "accent", notePath, false);
+            note.slide = r.boolean (n, "slide", notePath, false);
+            const auto name = r.text (n, "note", notePath, noteName (note.pitch));
+            const auto pitch = parseNoteName (name);
+            if (! pitch || *pitch < Step::minNote || *pitch > Step::maxNote)
+                r.fail (notePath + ".note", "'" + name + "' is not a note between " + noteName (Step::minNote) +
+                                                " and " + noteName (Step::maxNote));
+            else
+                note.pitch = *pitch;
+            out.push_back (note);
+        }
+        std::sort (out.begin(), out.end(), earlier);
+        return out;
+    }
+
     /** The pattern header (number, name, length); returns the index, or -1 on error. */
     int readPatternHeader (Reader& r, const juce::var& p, const juce::String& path, ProjectData& data)
     {
@@ -242,13 +277,18 @@ namespace
             const auto p = patterns[i];
             const auto path = "patterns[" + juce::String (i) + "]";
             const auto index = readPatternHeader (r, p, path, data);
-            if (index >= 0)
-                r.steps (p["steps"], path + ".steps", acid.lanes[static_cast<size_t> (index)], Step {}.note);
+            if (index < 0)
+                break;
+            std::array<Step, Pattern::maxSteps> grid {};
+            r.steps (p["steps"], path + ".steps", grid, Step {}.note);
+            acid.lanes[static_cast<size_t> (index)] =
+                steps::toNotes (grid, data.patterns[static_cast<size_t> (index)].length);
         }
         data.channels.push_back (acid);
     }
 
-    void parseVersion2 (Reader& r, const juce::var& root, ProjectData& data, const juce::File& folder)
+    /** Versions 2 and 3: channels, and patterns of lanes; lanes hold steps (2) or notes (3). */
+    void parseChannels (Reader& r, const juce::var& root, ProjectData& data, const juce::File& folder, int version)
     {
         data.masterDb = static_cast<float> (
             r.number (root["master"], "volume", "master", 0.0, MixerSettings::minVolumeDb, MixerSettings::maxVolumeDb));
@@ -334,8 +374,17 @@ namespace
                     break;
                 }
                 seen[static_cast<size_t> (channel - 1)] = true;
-                const auto defaultNote = owner.kind == InstrumentKind::sampler ? Step::samplerRootNote : Step {}.note;
-                r.steps (lane["steps"], lanePath + ".steps", owner.lanes[static_cast<size_t> (index)], defaultNote);
+                auto& out = owner.lanes[static_cast<size_t> (index)];
+                if (version >= 3)
+                    out = readNotes (r, lane["notes"], lanePath + ".notes");
+                else
+                {
+                    const auto defaultNote =
+                        owner.kind == InstrumentKind::sampler ? Step::samplerRootNote : Step {}.note;
+                    std::array<Step, Pattern::maxSteps> grid {};
+                    r.steps (lane["steps"], lanePath + ".steps", grid, defaultNote);
+                    out = steps::toNotes (grid, data.patterns[static_cast<size_t> (index)].length);
+                }
             }
         }
     }
@@ -369,7 +418,14 @@ namespace
         if (version <= 1)
             parseVersion1 (r, root, data);
         else
-            parseVersion2 (r, root, data, folder);
+        {
+            const auto ticks =
+                static_cast<int> (r.number (root, "ticksPerStep", "project", Note::ticksPerStep, 1, Note::maxTicks));
+            if (ticks != Note::ticksPerStep)
+                r.fail ("project.ticksPerStep", juce::String (ticks) + " is not supported (this version uses " +
+                                                    juce::String (Note::ticksPerStep) + ")");
+            parseChannels (r, root, data, folder, version);
+        }
 
         return r.ok() ? juce::Result::ok() : juce::Result::fail (r.error);
     }
@@ -412,6 +468,7 @@ juce::String toText (const Session& session, const juce::File& projectFolder)
     lines.add ("{");
     lines.add ("  \"format\": " + quoted (formatId) + ",");
     lines.add ("  \"version\": " + juce::String (formatVersion) + ",");
+    lines.add ("  \"ticksPerStep\": " + juce::String (Note::ticksPerStep) + ",");
     lines.add ("  \"tempo\": { \"bpm\": " + number (session.transport.bpm.load()) +
                ", \"swing\": " + number (session.transport.swing.load()) + " },");
     lines.add ("  \"master\": { \"volume\": " + number (session.master.volumeDb.load()) + " },");
@@ -465,22 +522,12 @@ juce::String toText (const Session& session, const juce::File& projectFolder)
         lines.add ("      \"lanes\": [");
         for (size_t l = 0; l < lanes.size(); ++l)
         {
-            const auto& lane = pattern.lane (lanes[l]);
-
-            // Keep steps past the length if they hold anything, so shortening never loses work.
-            auto lastToWrite = pattern.getLength();
-            for (int s = Pattern::maxSteps - 1; s >= lastToWrite; --s)
-                if (lane.getStep (s) != Step {})
-                {
-                    lastToWrite = s + 1;
-                    break;
-                }
-
+            const auto notes = pattern.lane (lanes[l]).notes(); // sorted: one order, always
             lines.add ("        {");
             lines.add ("          \"channel\": " + juce::String (lanes[l] + 1) + ",");
-            lines.add ("          \"steps\": [");
-            for (int s = 0; s < lastToWrite; ++s)
-                lines.add ("            " + stepLine (lane.getStep (s)) + (s + 1 < lastToWrite ? "," : ""));
+            lines.add ("          \"notes\": [");
+            for (size_t n = 0; n < notes.size(); ++n)
+                lines.add ("            " + noteLine (notes[n]) + (n + 1 < notes.size() ? "," : ""));
             lines.add ("          ]");
             lines.add (l + 1 < lanes.size() ? "        }," : "        }");
         }

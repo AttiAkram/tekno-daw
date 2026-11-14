@@ -73,8 +73,8 @@ void kickOnly (Session& s, Step hit = { true, false, false, Step::samplerRootNot
     while (s.channelCount() > 1)
         s.removeChannel (1);
     for (int i = 0; i < Pattern::maxSteps; ++i)
-        s.pattern (0).lane (0).setStep (i, {});
-    s.pattern (0).lane (0).setStep (0, hit);
+        s.pattern (0).setStep (0, i, {});
+    s.pattern (0).setStep (0, 0, hit);
     s.channel (0).mixer.volumeDb = 0.0f;
     s.transport.bpm = 120.0;
 }
@@ -225,8 +225,8 @@ TEST_CASE ("a drum hit lands on the exact sample of its step", "[core][engine][s
 {
     Session session;
     kickOnly (session);
-    session.pattern (0).lane (0).setStep (0, {});
-    session.pattern (0).lane (0).setStep (4, { true, false, false, Step::samplerRootNote }); // beat 2
+    session.pattern (0).setStep (0, 0, {});
+    session.pattern (0).setStep (0, 4, { true, false, false, Step::samplerRootNote }); // beat 2
     session.transport.playing = true;
     const auto out = renderStereo (session, 48000, 333);
     const auto expected = static_cast<int> (std::ceil (AudioEngine::samplesPerStep (sampleRate, 120.0) * 4.0));
@@ -295,7 +295,7 @@ TEST_CASE ("moving a fader never jumps: gain ramps across the block", "[core][mi
     Session session;
     tekno::test::acidOnly (session);
     for (int i = 0; i < Pattern::defaultLength; ++i) // one held note: the level only depends on the fader
-        session.pattern (0).lane (0).setStep (i, Step { true, false, true, 45 });
+        session.pattern (0).setStep (0, i, Step { true, false, true, 45 });
     session.channel (0).acid.envMod = 0.0f;
     session.transport.playing = true;
     AudioEngine engine (session);
@@ -383,13 +383,13 @@ TEST_CASE ("redo acts on the pattern and channel it was done on, not on the curr
     Fixture f;
     const auto acid = f.session.selectedChannel.load();
     REQUIRE (f.registry.execute ("pattern.step.toggle", { { "step", 2 } }).succeeded());
-    const auto edited = f.session.pattern (0).lane (acid).getStep (1);
+    const auto edited = f.session.pattern (0).getStep (acid, 1);
     f.registry.undo();
 
     f.registry.execute ("pattern.select", { { "pattern", 2 } });
     f.registry.execute ("channel.select", { { "channel", 1 } });
     REQUIRE (f.registry.redo());
-    CHECK (f.session.pattern (0).lane (acid).getStep (1) == edited);
+    CHECK (f.session.pattern (0).getStep (acid, 1) == edited);
     CHECK (f.session.pattern (1).lane (0).isBlank()); // the old bug: redo landed here
 }
 
@@ -405,7 +405,7 @@ TEST_CASE ("channel commands add, rename, remove, and undo brings everything bac
     CHECK (f.session.project.channelNames[static_cast<size_t> (originalCount)] == "snare");
     CHECK (f.line ("sample builtin:clap").isEmpty());
     CHECK (f.line ("toggle 5").isEmpty());
-    CHECK (f.session.pattern (0).lane (originalCount).getStep (4).note == Step::samplerRootNote); // C4 for drums
+    CHECK (f.session.pattern (0).getStep (originalCount, 4).note == Step::samplerRootNote); // C4 for drums
 
     CHECK (f.line ("channel.remove channel=1").isEmpty());
     CHECK (f.session.channelCount() == originalCount);

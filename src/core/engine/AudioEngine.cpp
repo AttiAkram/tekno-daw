@@ -67,12 +67,13 @@ void AudioEngine::prepare (double newSampleRate) noexcept
         p.acid.prepare (sampleRate);
         p.sampler.prepare (sampleRate);
         p.generation = ~0u; // force a full sync on the first block
-        p.lastStep = {};
-        p.holdGate = p.gateReleased = false;
+        p.resetPlayback();
         p.gainLeft = p.gainRight = 0.0f;
     }
     wasPlaying = false;
     step = -1;
+    stepCounter = 0;
+    firstStep = true;
     samplesIntoStep = 0.0;
     currentStepLength = 0.0;
     masterGain = volumeGain (session.master.volumeDb.load (relaxed));
@@ -90,9 +91,7 @@ void AudioEngine::syncPlayer (ChannelPlayer& player, const Channel& channel) noe
         player.kind = kind;
         player.acid.reset();
         player.sampler.reset();
-        player.lastStep = {};
-        player.holdGate = false;
-        player.gateReleased = true;
+        player.resetPlayback();
         player.gainLeft = player.gainRight = 0.0f;
     }
 
@@ -137,15 +136,20 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
     if (playing && ! wasPlaying)
     {
         step = -1;
+        stepCounter = 0;
+        firstStep = true;
         for (auto& p : players)
-            p.lastStep = {};
+            p.resetPlayback();
         currentStepLength = 0.0;
         samplesIntoStep = 0.0; // the very first sample starts step 0
     }
     else if (! playing && wasPlaying)
     {
         for (auto& p : players)
+        {
             p.acid.gateOff(); // samplers ring out: a one-shot is not cut by stop
+            p.resetPlayback();
+        }
         step = -1;
         transport.currentStep.store (-1, relaxed);
     }
@@ -166,14 +170,19 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
                     samplesIntoStep = 0.0;
             }
 
-            const auto gateEnd = currentStepLength * gateLength;
             for (int c = 0; c < channels; ++c)
             {
                 auto& p = players[static_cast<size_t> (c)];
-                if (p.kind == InstrumentKind::acid && ! p.gateReleased && ! p.holdGate && samplesIntoStep >= gateEnd)
+                while (p.nextPending < p.pendingCount &&
+                       p.pending[static_cast<size_t> (p.nextPending)].fraction * currentStepLength <= samplesIntoStep)
+                    play (p, c, p.pending[static_cast<size_t> (p.nextPending++)].note);
+
+                if (p.releasePending &&
+                    (stepCounter > p.releaseStep ||
+                     (stepCounter == p.releaseStep && samplesIntoStep >= currentStepLength * p.releaseFraction)))
                 {
                     p.acid.gateOff();
-                    p.gateReleased = true;
+                    p.releasePending = false;
                 }
             }
             samplesIntoStep += 1.0;
@@ -231,10 +240,10 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
 
 void AudioEngine::startStep (int index, double straightLength, int channels) noexcept
 {
-    const auto continuing = step >= 0;
+    firstStep = step < 0;
 
     // Wrap, and switch pattern on the wrap: the pattern being edited takes over at the bar line.
-    if (! continuing || index >= session.pattern (patternIndex).getLength())
+    if (firstStep || index >= session.pattern (patternIndex).getLength())
     {
         index = 0;
         patternIndex = session.selected.load (relaxed);
@@ -242,61 +251,98 @@ void AudioEngine::startStep (int index, double straightLength, int channels) noe
     }
 
     const auto& pattern = session.pattern (patternIndex);
-    const auto nextIndex = index + 1 < pattern.getLength() ? index + 1 : 0;
-    const auto& nextPattern = nextIndex == 0 ? session.pattern (session.selected.load (relaxed)) : pattern;
-
     step = index;
+    ++stepCounter;
     session.transport.currentStep.store (index, relaxed);
     currentStepLength = swungStepLength (straightLength, session.transport.swing.load (relaxed), index);
 
     for (int c = 0; c < channels; ++c)
+        collectNotes (players[static_cast<size_t> (c)], pattern.lane (c), index, pattern.lengthInTicks());
+}
+
+void AudioEngine::collectNotes (ChannelPlayer& player, const Lane& lane, int index, int lengthInTicks) noexcept
+{
+    const auto from = index * Note::ticksPerStep;
+    const auto to = std::min (from + Note::ticksPerStep, lengthInTicks);
+
+    player.pendingCount = player.nextPending = 0;
+    for (int i = 0; i < Lane::maxNotes; ++i)
     {
-        auto& player = players[static_cast<size_t> (c)];
-        const auto current = pattern.lane (c).getStep (index);
-        const auto next = nextPattern.lane (c).getStep (nextIndex);
-        if (! continuing)
-            player.lastStep = {};
-        startChannelStep (player, continuing, current, next);
+        const auto bits = lane.slot (i);
+        if (bits == 0)
+            continue;
+        const auto note = Note::unpack (bits);
+        if (note.start < from || note.start >= to || player.pendingCount == ChannelPlayer::maxPerStep)
+            continue;
+
+        // Keep them in order of start (then pitch): a handful at most, so insertion is enough.
+        auto at = player.pendingCount++;
+        while (at > 0 && earlier (note, player.pending[static_cast<size_t> (at - 1)].note))
+        {
+            player.pending[static_cast<size_t> (at)] = player.pending[static_cast<size_t> (at - 1)];
+            --at;
+        }
+        player.pending[static_cast<size_t> (at)] = { note,
+                                                     (note.start - from) / static_cast<double> (Note::ticksPerStep) };
     }
 }
 
-void AudioEngine::startChannelStep (ChannelPlayer& player, bool continuing, const Step& current,
-                                    const Step& next) noexcept
+bool AudioEngine::noteStartsAt (int channel, int tick) const noexcept
+{
+    const auto& current = session.pattern (patternIndex);
+    const auto length = current.lengthInTicks();
+    const auto& pattern = tick < length ? current : session.pattern (session.selected.load (relaxed));
+    if (tick >= length)
+        tick -= length;
+    const auto& lane = pattern.lane (channel);
+    for (int i = 0; i < Lane::maxNotes; ++i)
+        if (const auto bits = lane.slot (i); bits != 0 && Note::unpack (bits).start == tick)
+            return true;
+    return false;
+}
+
+void AudioEngine::play (ChannelPlayer& player, int channel, const Note& note) noexcept
 {
     if (player.kind == InstrumentKind::sampler)
     {
-        if (current.on && ! current.tie)
-            player.sampler.trigger (current.note, current.accent);
-        player.lastStep = current;
+        player.sampler.trigger (note.pitch, note.accent);
         return;
     }
 
     auto& voice = player.acid;
-    const auto gateOpen = continuing && voice.isGateOn();
-    const auto slidingIn = gateOpen && player.lastStep.on && player.lastStep.slide;
-    const auto tiedIn = gateOpen && current.tie;
+    const auto gateOpen = ! firstStep && voice.isGateOn();
+    if (gateOpen && player.hasLastNote && player.lastNote.slide)
+        voice.glideTo (note.pitch); // no retrigger: the slide is one continuous gesture
+    else
+        voice.noteOn (note.pitch, note.accent);
+    player.lastNote = note;
+    player.hasLastNote = true;
 
-    player.lastStep = current;
-    player.gateReleased = false;
-
-    if (current.on)
+    // Slide into a note that starts where this one ends: the gate stays open until it arrives.
+    if (note.slide && noteStartsAt (channel, note.end()))
     {
-        if (tiedIn)
-        {
-            // hold the previous note: no new pitch, no retrigger
-        }
-        else if (slidingIn)
-            voice.glideTo (current.note); // no retrigger: the slide is one continuous gesture
-        else
-            voice.noteOn (current.note, current.accent);
+        player.releasePending = false;
+        return;
+    }
+
+    // The gate closes 45% of a step before the end (55% of a one-step note), shorter notes in proportion.
+    constexpr auto tps = Note::ticksPerStep;
+    const auto fromStepStart = note.start - step * tps; // ticks into the current step
+    const auto tail = std::min (tps, note.length);
+    const auto lastStepStart = fromStepStart + note.length - tail;
+    if (tail == tps && lastStepStart % tps == 0)
+    {
+        player.releaseStep = stepCounter + lastStepStart / tps;
+        player.releaseFraction = gateLength; // exactly M2's gate for notes on the grid
     }
     else
     {
-        voice.gateOff();
-        player.gateReleased = true;
+        const auto ticks = lastStepStart + tail * gateLength;
+        const auto steps = std::floor (ticks / tps);
+        player.releaseStep = stepCounter + static_cast<std::int64_t> (steps);
+        player.releaseFraction = (ticks - steps * tps) / tps;
     }
-
-    player.holdGate = current.on && next.on && (current.slide || next.tie);
+    player.releasePending = true;
 }
 
 void AudioEngine::audioDeviceIOCallbackWithContext (const float* const*, int, float* const* outputs, int numOutputs,

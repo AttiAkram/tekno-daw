@@ -26,8 +26,13 @@ namespace tekno::core
     The same render() runs inside the audio device callback and offline (tests, rendering to a
     file): the engine never depends on a device, a window or the wall clock.
 
-    Timing is sample-accurate: step boundaries and gate-offs are checked on every sample, so they
-    land on the exact sample whatever the buffer size.
+    Lanes hold notes (ticks, 24 per step). At each step the engine collects the notes that start in it
+    and fires each at its exact sample; the acid gate closes at the note's end minus 45% of its last
+    step (55% gate, as on the 303), unless the note slides into one that starts where it ends.
+    Swing stretches and shrinks steps, and everything inside a step with it.
+
+    Timing is sample-accurate: note starts and gate-offs are checked on every sample, so they land on
+    the exact sample whatever the buffer size.
 
     Mixer: each channel goes through volume, constant-power pan, mute and solo into a
     stereo master. Gain changes ramp across the block so moving a fader never clicks. */
@@ -69,21 +74,45 @@ public:
     void audioDeviceStopped() override;
 
 private:
+    /** A note that starts inside the current step, `fraction` of the way through it. */
+    struct Pending
+    {
+        Note note;
+        double fraction = 0.0;
+    };
+
     /** What the engine keeps for one channel slot between blocks. */
     struct ChannelPlayer
     {
+        static constexpr int maxPerStep = 8; // notes starting in one step; more are dropped
+
         InstrumentKind kind = InstrumentKind::acid;
         std::uint32_t generation = 0;
         dsp::AcidVoice acid;
         dsp::Sampler sampler;
-        Step lastStep;         // the step that started last, as it was then
-        bool holdGate = false; // this step slides into the next: keep the gate open
-        bool gateReleased = false;
+
+        std::array<Pending, maxPerStep> pending {};
+        int pendingCount = 0, nextPending = 0;
+
+        Note lastNote; // the acid note that started last
+        bool hasLastNote = false;
+        bool releasePending = false; // the acid gate closes at releaseStep + releaseFraction
+        std::int64_t releaseStep = 0;
+        double releaseFraction = 0.0;
+
         float gainLeft = 0.0f, gainRight = 0.0f; // gains reached at the end of the last block
+
+        void resetPlayback() noexcept
+        {
+            pendingCount = nextPending = 0;
+            hasLastNote = releasePending = false;
+        }
     };
 
     void startStep (int index, double straightLength, int channels) noexcept;
-    void startChannelStep (ChannelPlayer& player, bool continuing, const Step& current, const Step& next) noexcept;
+    void collectNotes (ChannelPlayer& player, const Lane& lane, int index, int lengthInTicks) noexcept;
+    void play (ChannelPlayer& player, int channel, const Note& note) noexcept;
+    bool noteStartsAt (int channel, int tick) const noexcept;
     void syncPlayer (ChannelPlayer& player, const Channel& channel) noexcept;
 
     Session& session;
@@ -91,7 +120,9 @@ private:
     double sampleRate = 48000.0;
 
     bool wasPlaying = false;
-    int step = -1;
+    bool firstStep = true;        // the first step since play: nothing carries over into it
+    int step = -1;                // step of the pattern being played
+    std::int64_t stepCounter = 0; // steps since play, across pattern wraps
     int patternIndex = 0;
     double samplesIntoStep = 0.0;
     double currentStepLength = 0.0;

@@ -11,41 +11,66 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <vector>
 
+#include "core/model/Note.h"
 #include "core/model/Step.h"
 
 namespace tekno::core
 {
-/** The steps of one channel inside one pattern: up to 64, each a lock-free atomic, so the message
-    thread edits and the audio thread plays without ever waiting for each other. */
+/** The notes of one channel inside one pattern: up to 128, each in a lock-free atomic slot, so the
+    message thread edits and the audio thread plays without ever waiting for each other. Slots are in
+    no particular order; an empty slot holds 0. */
 class Lane
 {
 public:
-    static constexpr int maxSteps = 64;
+    static constexpr int maxNotes = 128;
 
     Lane() noexcept { clear(); }
 
-    Step getStep (int index) const noexcept;
-    void setStep (int index, const Step& step) noexcept;
+    /** Every note, sorted (earlier()). Message thread: it allocates. */
+    std::vector<Note> notes() const;
 
-    /** True when every step is untouched (`Step {}`): nothing to save. */
+    /** Makes the lane hold exactly `notes`, touching only the slots that change, so a playing lane
+        never sees more than the edit. False (and nothing changed) when there are more than maxNotes. */
+    bool setNotes (const std::vector<Note>& notes);
+
+    /** For the audio thread: the raw slot, 0 when empty. */
+    std::uint64_t slot (int index) const noexcept
+    {
+        return slots[static_cast<size_t> (index)].load (std::memory_order_relaxed);
+    }
+
     bool isBlank() const noexcept;
     void clear() noexcept;
 
-    static constexpr bool isValidIndex (int index) noexcept { return index >= 0 && index < maxSteps; }
-
 private:
-    std::array<std::atomic<std::uint32_t>, maxSteps> steps;
+    std::array<std::atomic<std::uint64_t>, maxNotes> slots;
 
-    static_assert (std::atomic<std::uint32_t>::is_always_lock_free);
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free);
 };
+
+/** The step sequencer's view of a lane, both ways. A step is on when a note starts on it; the steps a
+    longer note covers are ties, wrapping to the start of the pattern when the note runs past its end.
+    Notes off the grid are not steps: toSteps() skips them and fromSteps() keeps them as they are. */
+namespace steps
+{
+    inline constexpr int count = 64;
+
+    std::array<Step, count> fromNotes (const std::vector<Note>& notes, int patternLength);
+    std::vector<Note> toNotes (const std::array<Step, count>& steps, int patternLength,
+                               const std::vector<Note>& offGridNotesToKeep = {});
+
+    /** True when every note sits on the grid, so the step sequencer shows the lane completely. */
+    bool representable (const std::vector<Note>& notes);
+} // namespace steps
 
 /** A pattern: one lane per channel and one length for all of them, so switching pattern switches a
     whole section of the track, like in FL Studio. */
 class Pattern
 {
 public:
-    static constexpr int maxSteps = Lane::maxSteps;
+    static constexpr int maxSteps = steps::count;
     static constexpr int maxLanes = 16; // one per channel: Session::maxChannels
     static constexpr int defaultLength = 16;
 
@@ -54,17 +79,22 @@ public:
     Lane& lane (int channel) noexcept { return lanes[laneIndex (channel)]; }
     const Lane& lane (int channel) const noexcept { return lanes[laneIndex (channel)]; }
 
+    /** The step sequencer's view (see steps::). Message thread. */
+    Step getStep (int channel, int index) const;
+    void setStep (int channel, int index, const Step& step);
+
     /** How many steps play before the pattern wraps: 1..64. Odd lengths are welcome. */
     int getLength() const noexcept { return length.load (std::memory_order_relaxed); }
+    int lengthInTicks() const noexcept { return getLength() * Note::ticksPerStep; }
     void setLength (int newLength) noexcept;
 
-    /** True when nothing would be saved for it: default length and no step on in any lane. */
+    /** True when nothing would be saved for it: default length and no notes in any lane. */
     bool isEmpty() const noexcept;
 
     /** Back to a new, empty pattern. */
     void clear() noexcept;
 
-    static constexpr bool isValidIndex (int index) noexcept { return Lane::isValidIndex (index); }
+    static constexpr bool isValidIndex (int index) noexcept { return index >= 0 && index < maxSteps; }
 
 private:
     static size_t laneIndex (int channel) noexcept

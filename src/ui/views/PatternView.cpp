@@ -295,8 +295,9 @@ PatternView::Snapshot PatternView::takeSnapshot() const
     for (int c = 0; c < s.channels; ++c)
     {
         const auto slot = static_cast<size_t> (c);
+        const auto laneSteps = core::steps::fromNotes (pattern.lane (c).notes(), pattern.getLength());
         for (int i = 0; i < Pattern::maxSteps; ++i)
-            s.steps[slot][static_cast<size_t> (i)] = pattern.lane (c).getStep (i).pack();
+            s.steps[slot][static_cast<size_t> (i)] = laneSteps[static_cast<size_t> (i)].pack();
         s.channelNames[slot] = session.project.channelNames[slot];
         const auto& channel = session.channel (c);
         if (channel.kind.load() == InstrumentKind::sampler)

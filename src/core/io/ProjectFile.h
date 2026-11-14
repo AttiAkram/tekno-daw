@@ -14,8 +14,8 @@
 
 namespace tekno::core::io
 {
-/** The project file: UTF-8 JSON, written in a fixed order with one step per line, so that two versions
-    of a project can be compared line by line (and with git). Notes are written by name ("A2").
+/** The project file: UTF-8 JSON, written in a fixed order, so that two versions
+    of a project can be compared line by line (and with git): one note per line, pitches by name ("A2").
 
     Reading is all-or-nothing: a file with any error leaves the session untouched and says where the
     error is ("patterns[0].steps[3].note: 'H2' is not a note"). */
@@ -23,7 +23,7 @@ namespace project
 {
     inline constexpr const char* extension = ".tekno";
     inline constexpr const char* formatId = "tekno-daw/project";
-    inline constexpr int formatVersion = 2; // 1 = M2, one acid line; still read
+    inline constexpr int formatVersion = 3; // 3 = notes in ticks; 2 = steps per channel; 1 = one acid line. All read.
 
     /** The project as text. Deterministic: the same session always gives the same bytes. Sample files
         inside `projectFolder` are written relative to it, so a project folder can be moved whole. */

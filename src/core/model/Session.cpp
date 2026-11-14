@@ -67,11 +67,11 @@ void Session::loadDefaultProject()
     const Step hit { true, false, false, Step::samplerRootNote };
     for (int beat = 0; beat < 4; ++beat)
     {
-        first.lane (kick).setStep (beat * 4, hit);
-        first.lane (hat).setStep (beat * 4 + 2, hit);
+        first.setStep (kick, beat * 4, hit);
+        first.setStep (hat, beat * 4 + 2, hit);
     }
-    first.lane (clap).setStep (4, hit);
-    first.lane (clap).setStep (12, hit);
+    first.setStep (clap, 4, hit);
+    first.setStep (clap, 12, hit);
 
     // A minor acid line: A2 root with octave jumps, accents on the off-beats, slides into the jumps.
     constexpr int A2 = 45, C3 = 48, D3 = 50, E3 = 52, G3 = 55, A3 = 57;
@@ -96,7 +96,7 @@ void Session::loadDefaultProject()
         on (A3),
     };
     for (int i = 0; i < Pattern::defaultLength; ++i)
-        first.lane (acid).setStep (i, line[i]);
+        first.setStep (acid, i, line[i]);
 
     selectedChannel = acid;
     project.revision = project.savedRevision = 0;
@@ -129,8 +129,7 @@ juce::String Session::writeChannel (int index, const ChannelData& data)
     c.mixer.store (data.mixer);
     c.peak = 0.0f;
     for (size_t p = 0; p < data.lanes.size(); ++p)
-        for (int s = 0; s < Pattern::maxSteps; ++s)
-            patterns[p].lane (index).setStep (s, data.lanes[p][static_cast<size_t> (s)]);
+        patterns[p].lane (index).setNotes (data.lanes[p]);
     project.channelNames[channelSlot (index)] = data.name;
     const auto error = setChannelSample (index, data.sample);
     ++c.generation;
@@ -148,8 +147,7 @@ ChannelData Session::captureChannel (int index) const
     data.sampler = c.sampler.load();
     data.mixer = c.mixer.load();
     for (size_t p = 0; p < data.lanes.size(); ++p)
-        for (int s = 0; s < Pattern::maxSteps; ++s)
-            data.lanes[p][static_cast<size_t> (s)] = patterns[p].lane (index).getStep (s);
+        data.lanes[p] = patterns[p].lane (index).notes();
     return data;
 }
 

@@ -34,7 +34,7 @@ std::vector<float> heldNote (int midiNote, float drive, float cutoff = 1.0f, int
     s.channel (0).acid.cutoff = cutoff;
     s.channel (0).acid.drive = drive;
     for (int i = 0; i < Pattern::defaultLength; ++i)
-        s.pattern (0).lane (0).setStep (i, Step { true, false, true, midiNote });
+        s.pattern (0).setStep (0, i, Step { true, false, true, midiNote });
     s.transport.playing = true;
 
     AudioEngine engine (s);
@@ -137,7 +137,7 @@ TEST_CASE ("drive never exceeds full scale, even with everything up", "[core][dr
     s.channel (0).acid.accent = 1.0f;
     s.channel (0).acid.envMod = 1.0f;
     for (int i = 0; i < Pattern::defaultLength; ++i)
-        s.pattern (0).lane (0).setStep (i, Step { true, true, i % 2 == 0, 33 + (i * 7) % 36 });
+        s.pattern (0).setStep (0, i, Step { true, true, i % 2 == 0, 33 + (i * 7) % 36 });
     s.transport.playing = true;
     AudioEngine engine (s);
     engine.prepare (sampleRate);

@@ -57,9 +57,9 @@ float peak (const std::vector<float>& x)
 void onlySteps (Session& s, std::initializer_list<int> on, bool accent = false)
 {
     for (int i = 0; i < Pattern::defaultLength; ++i)
-        s.pattern (0).lane (0).setStep (i, Step { false, false, false, 45 });
+        s.pattern (0).setStep (0, i, Step { false, false, false, 45 });
     for (auto i : on)
-        s.pattern (0).lane (0).setStep (i, Step { true, accent, false, 45 });
+        s.pattern (0).setStep (0, i, Step { true, accent, false, 45 });
 }
 } // namespace
 
@@ -231,7 +231,7 @@ TEST_CASE ("a tie holds the note without a new attack", "[core][engine]")
         tekno::test::acidOnly (s);
         s.transport.bpm = 120.0;
         onlySteps (s, { 0 });
-        s.pattern (0).lane (0).setStep (1, Step { true, false, false, 45, tie });
+        s.pattern (0).setStep (0, 1, Step { true, false, false, 45, tie });
         s.transport.playing = true;
         const auto out = render (s, 12000);
         return rms (out, 5000, 6000); // the end of step 0: released without a tie, still sounding with it
