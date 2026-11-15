@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <array>
 #include <memory>
 
 #include <juce_data_structures/juce_data_structures.h>
@@ -35,6 +36,16 @@ public:
 
     juce::String snap() const; // a PianoRollView snap name, "step" by default
     void setSnap (const juce::String& name);
+
+    // Playing live and the audio device.
+    int audioBuffer() const; // samples per audio block to ask the device for (default 256: ~6 ms)
+    void setAudioBuffer (int samples);
+    juce::String audioDriver() const; // "jack" (default: ALSA when no JACK server answers) or "alsa"
+    void setAudioDriver (const juce::String& driver);
+    std::array<int, 2> liveOctaves() const; // acid (default 2), drums (default 4)
+    int liveVelocity() const;
+    bool liveShortGate() const;
+    void setLive (std::array<int, 2> octaves, int velocity, bool shortGate);
 
     bool scaleLock() const; // new notes land on the key's scale (on by default)
     void setScaleLock (bool on);

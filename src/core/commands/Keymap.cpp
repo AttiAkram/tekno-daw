@@ -35,8 +35,8 @@ namespace
 
 const juce::StringArray& Keymap::contexts()
 {
-    static const juce::StringArray list { "global",  "pattern", "pianoroll", "mixer",
-                                          "effects", "keys",    "acid",      "sampler" };
+    static const juce::StringArray list { "global",   "pattern", "pianoroll", "mixer",  "effects",
+                                          "keyboard", "keys",    "acid",      "sampler" };
     return list;
 }
 

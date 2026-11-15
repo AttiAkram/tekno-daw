@@ -77,6 +77,49 @@ void Preferences::setSnap (const juce::String& name)
     properties->setValue ("snap", name);
 }
 
+int Preferences::audioBuffer() const
+{
+    return properties->getIntValue ("audioBuffer", 256);
+}
+
+void Preferences::setAudioBuffer (int samples)
+{
+    properties->setValue ("audioBuffer", samples);
+}
+
+juce::String Preferences::audioDriver() const
+{
+    return properties->getValue ("audioDriver") == "alsa" ? "alsa" : "jack";
+}
+
+void Preferences::setAudioDriver (const juce::String& driver)
+{
+    properties->setValue ("audioDriver", driver);
+}
+
+std::array<int, 2> Preferences::liveOctaves() const
+{
+    return { properties->getIntValue ("liveAcidOctave", 2), properties->getIntValue ("liveDrumOctave", 4) };
+}
+
+int Preferences::liveVelocity() const
+{
+    return properties->getIntValue ("liveVelocity", 100);
+}
+
+bool Preferences::liveShortGate() const
+{
+    return properties->getBoolValue ("liveShortGate", false);
+}
+
+void Preferences::setLive (std::array<int, 2> octaves, int velocity, bool shortGate)
+{
+    properties->setValue ("liveAcidOctave", octaves[0]);
+    properties->setValue ("liveDrumOctave", octaves[1]);
+    properties->setValue ("liveVelocity", velocity);
+    properties->setValue ("liveShortGate", shortGate);
+}
+
 bool Preferences::scaleLock() const
 {
     return properties->getBoolValue ("scaleLock", true);

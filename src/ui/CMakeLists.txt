@@ -9,6 +9,7 @@ add_library(tekno_ui STATIC
     components/Terminal.cpp
     components/ValueChip.cpp
     views/EffectsView.cpp
+    views/KeyboardPanel.cpp
     views/KeysView.cpp
     views/MixerView.cpp
     views/PatternView.cpp

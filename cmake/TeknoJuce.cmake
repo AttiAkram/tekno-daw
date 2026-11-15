@@ -30,6 +30,7 @@ target_compile_definitions(tekno_juce
         JUCE_USE_CURL=0                 # no network code in the binary yet
         JUCE_WEB_BROWSER=0              # no webkit2gtk dependency
         JUCE_JACK=1                     # JACK (and PipeWire through pipewire-jack) next to ALSA
+        "JUCE_JACK_CLIENT_NAME=\"tekno-daw\"" # our name in the JACK / PipeWire graph, not "JUCEJack"
         JUCE_PLUGINHOST_LADSPA=0
         JUCE_DISABLE_JUCE_VERSION_PRINTING=1)
 

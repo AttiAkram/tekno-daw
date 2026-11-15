@@ -67,16 +67,24 @@ core::Keymap defaults()
     add ("global", K ('n', ctrl, 0), "ui.new", "new project");
     add ("global", K ('t'), "ui.theme.toggle", "theme");
     add ("global", K ('`'), "ui.terminal", "terminal");
+    add ("global", K (K::F5Key), "ui.view keyboard", "play live");
     add ("global", K (K::F6Key), "ui.view pattern", "step sequencer");
     add ("global", K (K::F7Key), "ui.view pianoroll", "piano roll");
     add ("global", K (K::F8Key), "ui.view effects", "effects");
     add ("global", K (K::F9Key), "ui.view mixer", "mixer");
     add ("global", K (K::F10Key), "ui.view keys", "edit the keys");
+    // The same panels on Alt + their place in the top bar: on many laptops the F keys need Fn.
+    const auto alt = M::altModifier;
+    add ("global", K ('1', alt, 0), "ui.view pattern", "step sequencer");
+    add ("global", K ('2', alt, 0), "ui.view pianoroll", "piano roll");
+    add ("global", K ('3', alt, 0), "ui.view keyboard", "play live");
+    add ("global", K ('4', alt, 0), "ui.view effects", "effects");
+    add ("global", K ('5', alt, 0), "ui.view mixer", "mixer");
     add ("global", K (K::pageUpKey), "pattern.previous", "previous pattern");
     add ("global", K (K::pageDownKey), "pattern.next", "next pattern");
     add ("global", K (K::upKey), "channel.previous", "previous channel");
     add ("global", K (K::downKey), "channel.next", "next channel");
-    const auto alt = M::altModifier;
+    add ("global", K (K::F5Key, alt, 0), "ui.tile keyboard", "keyboard beside");
     add ("global", K (K::F6Key, alt, 0), "ui.tile pattern", "steps beside");
     add ("global", K (K::F7Key, alt, 0), "ui.tile pianoroll", "piano roll beside");
     add ("global", K (K::F8Key, alt, 0), "ui.tile effects", "effects beside");
@@ -85,6 +93,16 @@ core::Keymap defaults()
     add ("global", K ('q', alt, 0), "ui.tile.close", "close panel");
     add ("global", K (K::rightKey, alt, 0), "ui.tile.focus next", "next panel");
     add ("global", K (K::leftKey, alt, 0), "ui.tile.focus previous", "previous panel");
+    // Playing live: the note keys belong to the keyboard panel; these are its settings.
+    add ("keyboard", K ('+'), "live.octave.shift 1", "octave up");
+    add ("keyboard", K ('='), "live.octave.shift 1", "octave up");
+    add ("keyboard", K ('-'), "live.octave.shift -1", "octave down");
+    add ("keyboard", K (K::rightKey), "live.octave.shift 1", "octave up");
+    add ("keyboard", K (K::leftKey), "live.octave.shift -1", "octave down");
+    add ("keyboard", K (K::upKey), "live.velocity.shift 10", "louder");
+    add ("keyboard", K (K::downKey), "live.velocity.shift -10", "softer");
+    add ("keyboard", K (K::tabKey), "live.gate toggle", "gate hold / short");
+    add ("keyboard", K (K::escapeKey), "live.off", "all notes off");
     add ("pattern", K ('['), "ui.page previous", "previous bar");
     add ("pattern", K (']'), "ui.page next", "next bar");
     add ("pianoroll", K ('c', ctrl, 0), "ui.roll.copy", "copy");

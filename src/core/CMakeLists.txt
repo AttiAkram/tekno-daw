@@ -22,6 +22,7 @@ add_library(tekno_core STATIC
     dsp/PlateReverb.cpp
     dsp/Sampler.cpp
     engine/AudioEngine.cpp
+    engine/LiveInput.cpp
     engine/OfflineRender.cpp
     io/MidiImport.cpp
     io/ProjectFile.cpp)

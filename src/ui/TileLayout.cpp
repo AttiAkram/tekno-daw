@@ -38,7 +38,7 @@ namespace
     constexpr std::pair<TileLayout::Panel, const char*> names[] {
         { TileLayout::Panel::pattern, "pattern" }, { TileLayout::Panel::pianoRoll, "pianoroll" },
         { TileLayout::Panel::mixer, "mixer" },     { TileLayout::Panel::keys, "keys" },
-        { TileLayout::Panel::effects, "effects" },
+        { TileLayout::Panel::effects, "effects" }, { TileLayout::Panel::keyboard, "keyboard" },
     };
 
     /** The two halves of `area` for a split, with `gap` between them. */
@@ -78,6 +78,8 @@ std::optional<TileLayout::Panel> TileLayout::panelFromName (const juce::String& 
         return Panel::pianoRoll;
     if (name == "fx" || name == "effetti")
         return Panel::effects;
+    if (name == "play" || name == "live" || name == "tastiera")
+        return Panel::keyboard;
     for (const auto& [p, n] : names)
         if (name == n)
             return p;

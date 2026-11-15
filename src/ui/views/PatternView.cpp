@@ -69,7 +69,7 @@ namespace
 
 PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionToShow, core::CommandRegistry& registry,
                           ProjectActions& projectActions, std::function<AudioStatus()> audioStatusProvider,
-                          core::Keymap& keymapToUse)
+                          core::Keymap& keymapToUse, core::LiveInput& live, std::function<juce::String()> midiStatus)
     : lnf (teknoLookAndFeel)
     , session (sessionToShow)
     , commands (registry)
@@ -206,29 +206,35 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
     , keymap (keymapToUse)
     , keysEditor (teknoLookAndFeel, keymapToUse, registry)
     , effectsPanel (teknoLookAndFeel, sessionToShow, registry)
+    , keyboardPanel (teknoLookAndFeel, sessionToShow, live, audioStatus, std::move (midiStatus))
 {
     setWantsKeyboardFocus (true);
 
-    const std::array<const char*, 4> views { "Pattern", "Piano roll", "Mixer", "Song" };
+    const std::array<const char*, 6> labels { "Pattern", "Piano roll", "Keyboard", "Effects", "Mixer", "Song" };
     for (size_t i = 0; i < navButtons.size(); ++i)
     {
         auto& button = navButtons[i];
-        button.setButtonText (views[i]);
+        button.setButtonText (labels[i]);
         setRole (button, Role::nav);
         button.setMouseClickGrabsKeyboardFocus (false);
-        button.setEnabled (i < 3); // the song view arrives in M6
         addAndMakeVisible (button);
+        if (i < navViews.size())
+        {
+            const auto view = TileLayout::panelName (navViews[i]);
+            button.onClick = [this, view] { run ("ui.view", { { "view", view } }); };
+        }
+        else
+            button.setEnabled (false); // the song view arrives in M6
     }
     navButtons[0].setToggleState (true, juce::dontSendNotification);
-    navButtons[0].onClick = [this] { run ("ui.view", { { "view", "pattern" } }); };
-    navButtons[1].onClick = [this] { run ("ui.view", { { "view", "pianoroll" } }); };
-    navButtons[2].onClick = [this] { run ("ui.view", { { "view", "mixer" } }); };
 
     addChildComponent (pianoRoll);
-    for (auto* panel : std::initializer_list<juce::Component*> { &pianoRoll, &mixer, &keysEditor, &effectsPanel })
+    for (auto* panel :
+         std::initializer_list<juce::Component*> { &pianoRoll, &mixer, &keysEditor, &effectsPanel, &keyboardPanel })
         panel->addMouseListener (this, true); // a click inside a panel makes it the active one
     addChildComponent (keysEditor);
     addChildComponent (effectsPanel);
+    addChildComponent (keyboardPanel);
     keysEditor.onChange = [this]
     {
         if (onKeymapEdited)
@@ -455,25 +461,6 @@ void PatternView::resized()
     leftColumn = area.removeFromLeft (space::leftColumn);
     content = area.reduced (space::gutter * 2.0f, space::gutter);
 
-    // Top bar: views centred, each as wide as its label so the spacing reads as even.
-    const auto navFont = lnf.fonts().font (type::control);
-    std::array<float, 4> navWidths {};
-    auto navTotal = 0.0f;
-    for (size_t i = 0; i < navButtons.size(); ++i)
-    {
-        const auto label = Fonts::format (type::control, navButtons[i].getButtonText());
-        navWidths[i] = std::ceil (juce::GlyphArrangement::getStringWidth (navFont, label)) + space::gutter * 2.0f;
-        navTotal += navWidths[i];
-    }
-    auto navX = topBar.getCentreX() - navTotal * 0.5f;
-    for (size_t i = 0; i < navButtons.size(); ++i)
-    {
-        navButtons[i].setBounds (juce::Rectangle<float> (navX, topBar.getCentreY() - shape::pillHeight * 0.5f,
-                                                         navWidths[i], shape::pillHeight)
-                                     .toNearestInt());
-        navX += navWidths[i];
-    }
-
     auto transport = topBar.reduced (space::gutter, 0.0f);
     auto pill = [&transport] (juce::Component& c, float width)
     {
@@ -483,6 +470,43 @@ void PatternView::resized()
     pill (playButton, 112.0f);
     pill (bpmChip, 112.0f);
     pill (swingChip, 128.0f);
+
+    // Top bar: the views between the name and the transport, centred on the window when they fit, each
+    // as wide as its label plus the same padding so the spacing reads as even. On a narrow window the
+    // padding shrinks, and then the song view (a placeholder until M6) gives way.
+    const auto navFont = lnf.fonts().font (type::control);
+    std::array<float, std::tuple_size_v<decltype (navButtons)>> labelWidths {};
+    auto labelsTotal = 0.0f;
+    for (size_t i = 0; i < navButtons.size(); ++i)
+    {
+        const auto label = Fonts::format (type::control, navButtons[i].getButtonText());
+        labelWidths[i] = std::ceil (juce::GlyphArrangement::getStringWidth (navFont, label));
+        labelsTotal += labelWidths[i];
+    }
+    const auto nameWidth = juce::GlyphArrangement::getStringWidth (lnf.fonts().font (type::wordmark), "tekno-daw");
+    const auto navLeft = topBar.getX() + space::gutter * 2.0f + std::ceil (nameWidth);
+    const auto navRight = transport.getRight() - space::gap;
+    const auto minPadding = space::unit * 2.0f;
+    auto count = static_cast<float> (navButtons.size());
+    auto& song = navButtons.back();
+    song.setVisible (labelsTotal + minPadding * count <= navRight - navLeft);
+    if (! song.isVisible())
+    {
+        labelsTotal -= labelWidths.back();
+        count -= 1.0f;
+    }
+    const auto padding = std::clamp ((navRight - navLeft - labelsTotal) / count, minPadding, space::gutter * 2.0f);
+    const auto navTotal = labelsTotal + padding * count;
+    auto navX = std::clamp (topBar.getCentreX() - navTotal * 0.5f, navLeft, std::max (navLeft, navRight - navTotal));
+    for (size_t i = 0; i < navButtons.size(); ++i)
+    {
+        if (! navButtons[i].isVisible())
+            continue;
+        navButtons[i].setBounds (juce::Rectangle<float> (navX, topBar.getCentreY() - shape::pillHeight * 0.5f,
+                                                         labelWidths[i] + padding, shape::pillHeight)
+                                     .toNearestInt());
+        navX += labelWidths[i] + padding;
+    }
 
     // Left column: project, the selected channel, keys, audio — divided by thin lines.
     auto column = leftColumn.reduced (space::gutter);
@@ -533,6 +557,8 @@ void PatternView::resized()
             mixer.setBounds (inner.toNearestInt());
         else if (tile.panel == View::effects)
             effectsPanel.setBounds (inner.toNearestInt());
+        else if (tile.panel == View::keyboard)
+            keyboardPanel.setBounds (inner.toNearestInt());
         else
             keysEditor.setBounds (inner.toNearestInt());
     }
@@ -554,6 +580,7 @@ void PatternView::resized()
     pianoRoll.setVisible (tiles.isOpen (View::pianoRoll));
     keysEditor.setVisible (tiles.isOpen (View::keys));
     effectsPanel.setVisible (tiles.isOpen (View::effects));
+    keyboardPanel.setVisible (tiles.isOpen (View::keyboard));
     editKeysButton.setBounds (keysArea.withHeight (28.0f)
                                   .withLeft (keysArea.getRight() - 56.0f)
                                   .withSizeKeepingCentre (56.0f, shape::pillHeightCompact)
@@ -647,6 +674,18 @@ void PatternView::setSnap (PianoRollView::Snap snap)
         button.setToggleState (button.getButtonText() == PianoRollView::snapName (snap), juce::dontSendNotification);
 }
 
+const std::array<PatternView::View, 5> PatternView::navViews { View::pattern, View::pianoRoll, View::keyboard,
+                                                               View::effects, View::mixer };
+
+juce::String PatternView::keysFor (const juce::String& command) const
+{
+    juce::StringArray keys;
+    for (const auto& b : keymap.all())
+        if (b.context == "global" && b.command == command)
+            keys.add (b.key);
+    return keys.joinIntoString (" or ");
+}
+
 std::optional<PatternView::View> PatternView::viewFromName (const juce::String& name)
 {
     return TileLayout::panelFromName (name);
@@ -655,9 +694,8 @@ std::optional<PatternView::View> PatternView::viewFromName (const juce::String& 
 void PatternView::layoutChanged()
 {
     const auto active = tiles.active();
-    navButtons[0].setToggleState (active == View::pattern, juce::dontSendNotification);
-    navButtons[1].setToggleState (active == View::pianoRoll, juce::dontSendNotification);
-    navButtons[2].setToggleState (active == View::mixer, juce::dontSendNotification);
+    for (size_t i = 0; i < navViews.size(); ++i)
+        navButtons[i].setToggleState (active == navViews[i], juce::dontSendNotification);
     resized();
     repaint();
     if (onLayoutChanged)
@@ -1027,7 +1065,17 @@ void PatternView::paintContent (juce::Graphics& g) const
         drawText (g, "Keys", type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
         drawText (g,
                   juce::String (static_cast<int> (keymap.all().size())) +
-                      " keys  /  a key runs a command line, like the terminal  /  F6 to go back",
+                      " keys  /  a key runs a command line, like the terminal  /  " + keysFor ("ui.view pattern") +
+                      " to go back",
+                  type::meta, muted, metaArea);
+    }
+    else if (active == View::keyboard)
+    {
+        drawText (g, "Keyboard", type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
+        drawText (g,
+                  "play live: Z to M and Q to P, Shift for accent  /  + and - octave, arrows velocity, Tab gate, Esc "
+                  "off  /  " +
+                      keysFor ("ui.view keyboard"),
                   type::meta, muted, metaArea);
     }
     else if (active == View::effects)
@@ -1036,7 +1084,7 @@ void PatternView::paintContent (juce::Graphics& g) const
         drawText (g,
                   (effectsPanel.showsMaster() ? juce::String ("master")
                                               : shown.channelNames[static_cast<size_t> (shown.selectedChannel)]) +
-                      "  /  inserts, in the order the sound goes through them  /  F8",
+                      "  /  inserts, in the order the sound goes through them  /  " + keysFor ("ui.view effects"),
                   type::meta, muted, metaArea);
     }
     else if (active == View::mixer)
@@ -1633,11 +1681,12 @@ juce::StringArray PatternView::activeKeyContexts() const
     if (shown.channels > 0)
         contexts.add (shown.isSampler (shown.selectedChannel) ? "sampler" : "acid");
     const auto active = tiles.active();
-    contexts.add (active == View::pianoRoll ? "pianoroll"
-                  : active == View::mixer   ? "mixer"
-                  : active == View::keys    ? "keys"
-                  : active == View::effects ? "effects"
-                                            : "pattern");
+    contexts.add (active == View::pianoRoll  ? "pianoroll"
+                  : active == View::mixer    ? "mixer"
+                  : active == View::keys     ? "keys"
+                  : active == View::effects  ? "effects"
+                  : active == View::keyboard ? "keyboard"
+                                             : "pattern");
     contexts.add ("global");
     return contexts;
 }
@@ -1648,8 +1697,20 @@ void PatternView::keymapChanged()
     repaint (leftColumn.toNearestInt());
 }
 
+bool PatternView::keyStateChanged (bool)
+{
+    // Releases go to the keyboard panel whatever is active: a key let go after switching panels must
+    // still stop its note.
+    keyboardPanel.keysChanged();
+    return false;
+}
+
 bool PatternView::keyPressed (const juce::KeyPress& key)
 {
+    // Playing live: while the keyboard panel is the active one, its note keys come first.
+    if (tiles.active() == View::keyboard && keyboardPanel.keyDown (key))
+        return true;
+
     // Every key is a binding of the keymap: a command line, looked up from the most specific context.
     const auto binding = keymap.find (keys::describe (key), activeKeyContexts());
     if (! binding)

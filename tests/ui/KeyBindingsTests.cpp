@@ -31,15 +31,31 @@ TEST_CASE ("the default keys have no conflicts and every one runs a real command
     CHECK (map.conflicts().empty());
     CHECK (map.all().size() > 20);
 
-    // The window's own commands (ui.*) are registered by the app; the rest must parse here.
+    // The app registers the window's own commands (ui.*) and those for playing live and for the audio
+    // device (live.*, audio.*); its smoke test checks those keys. The rest must parse here.
     core::Session session;
     core::CommandRegistry registry;
     core::registerSessionCommands (registry, session);
     for (const auto& b : map.all())
     {
         CAPTURE (b.key, b.command);
-        if (! b.command.startsWith ("ui."))
+        if (! b.command.startsWith ("ui.") && ! b.command.startsWith ("live.") && ! b.command.startsWith ("audio."))
             CHECK (core::CommandLine::parse (b.command, registry).command.has_value());
+    }
+}
+
+TEST_CASE ("every panel opens with Alt and its place in the top bar, as well as with an F key", "[ui][keys]")
+{
+    // Many laptops send media keys for F1-F12 unless Fn is held: numbers always work.
+    const auto map = ui::keys::defaults();
+    const juce::StringArray panels { "pattern", "pianoroll", "keyboard", "effects", "mixer" };
+    for (int i = 0; i < panels.size(); ++i)
+    {
+        const auto key = ui::keys::describe (juce::KeyPress ('1' + i, juce::ModifierKeys::altModifier, 0));
+        const auto binding = map.find (key, { "global" });
+        CAPTURE (key);
+        REQUIRE (binding);
+        CHECK (binding->command == "ui.view " + panels[i]);
     }
 }
 

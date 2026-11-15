@@ -16,6 +16,7 @@
 
 #include "core/commands/CommandRegistry.h"
 #include "core/model/Session.h"
+#include "ui/AudioStatus.h"
 #include "ui/ProjectActions.h"
 #include "ui/TileLayout.h"
 #include "ui/components/LevelMeters.h"
@@ -23,22 +24,13 @@
 #include "ui/components/ValueChip.h"
 #include "ui/theme/TeknoLookAndFeel.h"
 #include "ui/views/EffectsView.h"
+#include "ui/views/KeyboardPanel.h"
 #include "ui/views/KeysView.h"
 #include "ui/views/MixerView.h"
 #include "ui/views/PianoRollView.h"
 
 namespace tekno::ui
 {
-/** What the view shows about the audio device. Filled by the app, which owns the device. */
-struct AudioStatus
-{
-    bool running = false;
-    juce::String deviceName;
-    double sampleRate = 0.0;
-    int bufferSize = 0;
-    juce::String problem; // why there is no audio, when not running
-};
-
 /** The main screen: transport, project, the selected channel's controls, the pattern bank and the
     channel rack (one row of steps per channel, 16 steps per page).
 
@@ -49,7 +41,8 @@ class PatternView final : public juce::Component, public juce::FileDragAndDropTa
 {
 public:
     PatternView (TeknoLookAndFeel& lookAndFeel, core::Session& session, core::CommandRegistry& commands,
-                 ProjectActions& projectActions, std::function<AudioStatus()> audioStatus, core::Keymap& keymap);
+                 ProjectActions& projectActions, std::function<AudioStatus()> audioStatus, core::Keymap& keymap,
+                 core::LiveInput& live, std::function<juce::String()> midiStatus);
 
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
@@ -86,7 +79,10 @@ public:
 
     /** Where a key press looks, most specific first: the selected channel's instrument, the view, global. */
     juce::StringArray activeKeyContexts() const;
+    juce::String keysFor (const juce::String& command) const; // "alt + 3 or F5", from the keymap
     PianoRollView& getPianoRoll() noexcept { return pianoRoll; }
+    KeyboardPanel& getKeyboard() noexcept { return keyboardPanel; }
+    bool keyStateChanged (bool isKeyDown) override;
     View currentView() const noexcept { return tiles.active(); }
 
     // Tiling: open a panel beside the active one, close the active one, move between them.
@@ -198,7 +194,8 @@ private:
     ProjectActions& actions;
     std::function<AudioStatus()> audioStatus;
 
-    std::array<juce::TextButton, 4> navButtons;
+    std::array<juce::TextButton, 6> navButtons; // the panels in the order of Alt + 1..5, then the song
+    static const std::array<View, 5> navViews;
     ValueChip swingChip, bpmChip, lengthChip;
     juce::TextButton playButton { "play" };
     juce::TextButton sampleButton { "load" };
@@ -213,6 +210,7 @@ private:
     core::Keymap& keymap;
     KeysView keysEditor;
     EffectsView effectsPanel;
+    KeyboardPanel keyboardPanel;
     juce::TextButton editKeysButton { "edit" };
     std::array<juce::TextButton, 4> snapButtons;
     juce::TextButton keyButton; // the project's key: opens a menu of roots and scales

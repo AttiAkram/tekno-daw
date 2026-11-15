@@ -36,8 +36,22 @@ AppOptions AppOptions::parse (const juce::StringArray& arguments)
         }
         else if (arg.startsWith ("--run="))
             options.run.addTokens (arg.fromFirstOccurrenceOf ("=", false, false), ";", "\"");
+        else if (arg.startsWith ("--wait="))
+        {
+            options.waitMs = arg.fromFirstOccurrenceOf ("=", false, false).getIntValue();
+            if (options.waitMs < 1 || options.waitMs > 600000)
+                options.errors.add ("--wait must be between 1 and 600000 ms");
+        }
         else if (arg.startsWith ("--view="))
             options.view = arg.fromFirstOccurrenceOf ("=", false, false);
+        else if (arg.startsWith ("--size="))
+        {
+            const auto size = arg.fromFirstOccurrenceOf ("=", false, false);
+            options.width = size.upToFirstOccurrenceOf ("x", false, true).getIntValue();
+            options.height = size.fromFirstOccurrenceOf ("x", false, true).getIntValue();
+            if (options.width < 1024 || options.height < 640 || options.width > 16384 || options.height > 16384)
+                options.errors.add ("--size must be at least 1024x640, the window's smallest size");
+        }
         else if (arg == "--no-audio")
             options.noAudio = true;
         else if (arg == "--theme=dark")
@@ -60,7 +74,9 @@ juce::String AppOptions::helpText()
            "  --snapshot=<file>    render the main window to a PNG and exit\n"
            "  --render=<file.wav>  render the pattern to a WAV (no window, no audio device) and exit\n"
            "  --bars=<n>           how many bars --render writes (default 4)\n"
-           "  --view=<view>        start on this view: pattern, pianoroll or mixer\n"
+           "  --view=<view>        start on this view: pattern, pianoroll, keyboard, effects, mixer or keys\n"
+           "  --size=<w>x<h>       open the window at this size, at least 1024x640 (default 1440x900)\n"
+           "  --wait=<ms>          wait this long before --snapshot or --smoke-test act\n"
            "  --no-audio           start without opening an audio device\n"
            "  --run=\"cmd; cmd\"     open the terminal and run these commands at start\n"
            "  --smoke-test         open the window, quit after one second (used by tests)\n"

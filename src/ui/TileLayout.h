@@ -30,6 +30,7 @@ public:
         mixer,
         keys,
         effects,
+        keyboard, // play live
     };
     static juce::String panelName (Panel panel); // "pattern", "pianoroll", "mixer", "keys"
     static std::optional<Panel> panelFromName (const juce::String& name);

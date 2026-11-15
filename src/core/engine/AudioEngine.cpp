@@ -256,6 +256,8 @@ void AudioEngine::renderChunk (float* const* outputs, int numOutputs, int offset
     wasPlaying = playing;
 
     startPreview (channels);
+    live.drain ([this, channels, straightLength] (const LiveInput::Event& e)
+                { playLive (e, channels, straightLength); });
 
     float masterPeakLeft = 0.0f, masterPeakRight = 0.0f;
     const auto rampStep = 1.0f / static_cast<float> (std::max (1, numSamples));
@@ -290,11 +292,13 @@ void AudioEngine::renderChunk (float* const* outputs, int numOutputs, int offset
             samplesIntoStep += 1.0;
         }
 
-        for (int c = 0; c < channels; ++c) // auditioned acid notes are short
+        for (int c = 0; c < channels; ++c) // auditioned and short-gated live acid notes end by themselves
         {
             auto& p = players[static_cast<size_t> (c)];
             if (p.previewSamplesLeft > 0 && --p.previewSamplesLeft == 0)
                 p.acid.gateOff();
+            if (p.shortGateSamples > 0 && --p.shortGateSamples == 0)
+                releaseLive (p, p.shortGatePitch);
         }
 
         // Each channel's dry sound into its own buffer: effects and faders come after the loop.
@@ -398,6 +402,82 @@ void AudioEngine::startPreview (int channels) noexcept
     player.previewSamplesLeft = static_cast<int> (sampleRate * 0.25); // a quarter of a second
 }
 
+void AudioEngine::playLive (const LiveInput::Event& event, int channels, double straightLength) noexcept
+{
+    using Type = LiveInput::Event::Type;
+    if (event.type == Type::allOff)
+    {
+        for (auto& p : players)
+        {
+            if (p.heldCount > 0 || p.shortGateSamples > 0)
+                p.acid.gateOff();
+            p.heldCount = 0;
+            p.shortGateSamples = 0;
+        }
+        return;
+    }
+    if (event.channel < 0 || event.channel >= channels)
+        return;
+    auto& player = players[static_cast<size_t> (event.channel)];
+
+    if (event.type == Type::noteOff)
+    {
+        if (player.kind == InstrumentKind::acid &&
+            ! (player.shortGateSamples > 0 && event.pitch == player.shortGatePitch))
+            releaseLive (player, event.pitch);
+        return;
+    }
+
+    live.noteWait (juce::Time::getMillisecondCounterHiRes() - event.timeMs);
+    const auto gain = Note::velocityGain (event.velocity);
+    if (player.kind == InstrumentKind::sampler)
+    {
+        player.sampler.trigger (event.pitch, event.accent, gain);
+        return;
+    }
+
+    // Acid, mono legato: a key pressed while another is held slides to it, like a 303 played by hand.
+    if (player.heldCount == 0)
+        player.acid.noteOn (event.pitch, event.accent);
+    else
+        player.acid.glideTo (event.pitch);
+    auto count = 0; // keep each pitch once, the newest last
+    for (int i = 0; i < player.heldCount; ++i)
+        if (player.held[static_cast<size_t> (i)] != event.pitch)
+            player.held[static_cast<size_t> (count++)] = player.held[static_cast<size_t> (i)];
+    if (count == static_cast<int> (player.held.size())) // 16 keys down at once: forget the oldest
+    {
+        std::move (player.held.begin() + 1, player.held.end(), player.held.begin());
+        --count;
+    }
+    player.held[static_cast<size_t> (count)] = event.pitch;
+    player.heldCount = count + 1;
+    player.acidGainTarget = gain;
+    player.previewSamplesLeft = 0;
+    player.releasePending = false; // a pattern note's gate-off must not cut the live one
+    if (event.shortGate)
+    {
+        player.shortGateSamples = std::max (1, static_cast<int> (straightLength * gateLength));
+        player.shortGatePitch = event.pitch;
+    }
+}
+
+void AudioEngine::releaseLive (ChannelPlayer& player, std::uint8_t pitch) noexcept
+{
+    auto count = 0;
+    auto wasSounding = player.heldCount > 0 && player.held[static_cast<size_t> (player.heldCount - 1)] == pitch;
+    for (int i = 0; i < player.heldCount; ++i)
+        if (player.held[static_cast<size_t> (i)] != pitch)
+            player.held[static_cast<size_t> (count++)] = player.held[static_cast<size_t> (i)];
+    if (count == player.heldCount)
+        return; // it wasn't held
+    player.heldCount = count;
+    if (count == 0)
+        player.acid.gateOff();
+    else if (wasSounding)
+        player.acid.glideTo (player.held[static_cast<size_t> (count - 1)]); // back to the key still down
+}
+
 void AudioEngine::startStep (int index, double straightLength, int channels) noexcept
 {
     firstStep = step < 0;
@@ -468,6 +548,9 @@ void AudioEngine::play (ChannelPlayer& player, int channel, const Note& note) no
         player.sampler.trigger (note.pitch, note.accent, Note::velocityGain (note.velocity));
         return;
     }
+
+    if (player.heldCount > 0)
+        return; // someone is playing this channel live: live play wins over the pattern
 
     auto& voice = player.acid;
     player.previewSamplesLeft = 0; // the sequencer takes over from an audition

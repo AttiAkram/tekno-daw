@@ -29,7 +29,7 @@ and project version history.
 | ✅ M1 | MVP: an acid synth playing a 16-step pattern |
 | ✅ M2 | Real sequencer: patterns, accent / slide / tie, swing, project files, drive, terminal |
 | ✅ M3 | Channel rack, drum sampler, mixer, piano roll, keymaps per context, tiling panels |
-| ▶ M4 | Native effects (✅), live play from the PC keyboard and MIDI, macros, VST3 hosting |
+| ▶ M4 | Native effects (✅), live play from the PC keyboard and MIDI (✅), macros, VST3 hosting |
 | M5 | Audio export, full project format, more import formats |
 | M6 | Arrangement and automation |
 | M7 | Polish and packaging (AppImage, Flatpak, AUR) |
@@ -113,7 +113,8 @@ tekno-daw --theme=dark|light   start with this theme
 tekno-daw --snapshot=out.png   render the main window to a PNG and exit
 tekno-daw song.tekno           open a project
 tekno-daw song.tekno --render=out.wav --bars=8   render its selected pattern to a WAV, no sound card needed
-tekno-daw --view=mixer         start on the mixer (or pattern, pianoroll)
+tekno-daw --view=mixer         start on the mixer (or pattern, pianoroll, keyboard, effects, keys)
+tekno-daw --size=1024x640      open the window at this size (the smallest it allows)
 tekno-daw --no-audio           start without opening an audio device
 tekno-daw --run="bpm 138; swing 62"   open the terminal and run commands at start
 tekno-daw --smoke-test         open the window and quit after a second
@@ -122,7 +123,8 @@ tekno-daw --version
 
 ### Effects
 
-Each channel, and the master, has four insert slots, before the fader. Open the effects panel with F8:
+Each channel, and the master, has four insert slots, before the fader. Open the effects panel from the
+top bar, with Alt+4 or with F8:
 "+ add" puts a distortion, a ping-pong delay or a plate reverb in a slot, and each card has its knobs,
 on/off, move left/right and remove. A light on each card shows when it is making sound, and turns red
 when a distortion clips hard. The mixer shows each strip's effects by name.
@@ -138,12 +140,41 @@ From the terminal: `fx.add delay`, `fx.set 1 feedback 0.8`, `fx.set 2 mode fold`
 delays and 8 reverbs. The acid synth also has a **shape** knob (saw to square, morphing) and a **glide**
 knob (how long a slide takes). New projects start at 170 BPM.
 
+### Play live
+
+The keyboard panel (KEYBOARD in the top bar, Alt+3 or F5) plays the selected channel from the PC keyboard,
+laid out as in trackers:
+Z S X D C V G B H N J M for one octave (white keys on the bottom row, black keys on the row above), then
+Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P for the next. Shift plays an accent, on any keyboard layout.
+
+- **Acid channels** are mono, like a 303 played by hand: a key pressed while another is held slides to it,
+  and letting go slides back to the key still down.
+- **Drum channels** play one whole hit per key.
+- **+** and **-** (or Left / Right) change the octave, Up / Down the velocity. Tab switches the gate between
+  `hold` (as long as the key) and `short` (one 303 step, whatever the key does), and Esc stops everything.
+  Clicking or dragging on the on-screen piano plays too.
+- While a key is held, the pattern doesn't play over it on that channel.
+
+MIDI keyboards are opened as soon as they are plugged in. Other programs, such as a virtual keyboard like
+vmpk or a sequencer, send notes to the `tekno-daw` MIDI port. Every MIDI channel plays the selected
+channel, and a velocity of 100 or more is an accent.
+
+Sound goes out through JACK when a JACK server answers (PipeWire with `pipewire-jack` is one), otherwise
+through ALSA; `audio.driver jack|alsa` chooses. The panel shows the latency as it is measured: how long
+the last note waited for the audio, plus the buffer, plus what the device adds. It also counts the
+blocks the device dropped. `audio.buffer 128` halves the default of 256 (about 8 ms instead of 13 on a
+laptop with PipeWire); if the panel counts dropouts, go back up.
+
+From the terminal: `live.octave 3`, `live.velocity 110`, `live.gate short`, `live.note A2`,
+`live.release A2`, `live.off`, `midi.inputs`.
+
 ### Panels side by side
 
-The step sequencer, the piano roll, the mixer and the keys editor are panels, tiled like a tiling window
-manager: Alt+F6 / Alt+F7 / Alt+F8 / Alt+F9 / Alt+F10 open one beside the active panel (splitting it along its
-longer side), Alt+Q closes the active one, Alt+Left / Alt+Right move between them, and the gaps between
-panels can be dragged. F6 / F7 / F8 / F9 / F10 still swap the active panel for another. The active panel has a
+The step sequencer, the piano roll, the keyboard, the effects and the mixer are in the top bar, and
+Alt+1 to Alt+5 open them in that order (on many laptops the F keys need Fn; F5 to F10 work too). They are
+panels, tiled like a tiling window manager: Alt+F5 to Alt+F10 open one beside the active panel (splitting it
+along its longer side), Alt+Q closes the active one, Alt+Left / Alt+Right move between them, and the gaps
+between panels can be dragged. Opening one from the top bar swaps the active panel for it. The active panel has a
 dark frame, and it decides which keys apply. The layout is remembered. From the terminal: `ui.tile mixer`,
 `ui.tile.close`, `ui.tile.focus next`, `ui.tile.single`.
 

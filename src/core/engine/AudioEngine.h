@@ -17,6 +17,7 @@
 #include "core/dsp/PingPongDelay.h"
 #include "core/dsp/PlateReverb.h"
 #include "core/dsp/Sampler.h"
+#include "core/engine/LiveInput.h"
 #include "core/model/Session.h"
 
 namespace tekno::core
@@ -63,6 +64,9 @@ public:
         return 2.0 * straightLength * (index % 2 == 0 ? share : 1.0 - share);
     }
 
+    /** Notes played live, for this engine (the UI and MIDI push into it; see LiveInput). */
+    LiveInput& liveInput() noexcept { return live; }
+
     /** Linear gain of a volume in dB; at or below the minimum it is silence. */
     static float volumeGain (float volumeDb) noexcept;
 
@@ -106,6 +110,13 @@ private:
         float gainLeft = 0.0f, gainRight = 0.0f;      // gains reached at the end of the last block
         float acidGain = 1.0f, acidGainTarget = 1.0f; // the acid note's velocity, glided to avoid clicks
         int previewSamplesLeft = 0;                   // an auditioned acid note closes its gate when this reaches 0
+
+        // Live play on an acid channel: the keys held down, in the order they went down (the last one
+        // sounds: mono legato), and the countdown of a short-gated note.
+        std::array<std::uint8_t, 16> held {};
+        int heldCount = 0;
+        int shortGateSamples = 0;
+        std::uint8_t shortGatePitch = 0;
 
         void resetPlayback() noexcept
         {
@@ -167,6 +178,9 @@ private:
     std::array<int, maxReverbs> reverbOwner {};
 
     void startPreview (int channels) noexcept;
+    void playLive (const LiveInput::Event& event, int channels, double straightLength) noexcept;
+    void releaseLive (ChannelPlayer& player, std::uint8_t pitch) noexcept;
+    LiveInput live;
 
     JUCE_DECLARE_NON_COPYABLE (AudioEngine)
 };
