@@ -135,6 +135,24 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
             Knob::Group::acid,
             [] (const core::Channel& c) { return c.acid.drive.load(); },
             {} },
+          { "shape",
+            "synth.shape",
+            "value",
+            0,
+            1,
+            core::AcidSettings {}.shape,
+            Knob::Group::acid,
+            [] (const core::Channel& c) { return c.acid.shape.load(); },
+            {} },
+          { "glide",
+            "synth.glide",
+            "seconds",
+            core::AcidSettings::minGlide,
+            core::AcidSettings::maxGlide,
+            core::AcidSettings {}.glide,
+            Knob::Group::acid,
+            [] (const core::Channel& c) { return c.acid.glide.load(); },
+            {} },
           { "tune",
             "sampler.tune",
             "semitones",
@@ -187,6 +205,7 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
     , pianoRoll (teknoLookAndFeel, sessionToShow, registry)
     , keymap (keymapToUse)
     , keysEditor (teknoLookAndFeel, keymapToUse, registry)
+    , effectsPanel (teknoLookAndFeel, sessionToShow, registry)
 {
     setWantsKeyboardFocus (true);
 
@@ -206,9 +225,10 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
     navButtons[2].onClick = [this] { run ("ui.view", { { "view", "mixer" } }); };
 
     addChildComponent (pianoRoll);
-    for (auto* panel : std::initializer_list<juce::Component*> { &pianoRoll, &mixer, &keysEditor })
+    for (auto* panel : std::initializer_list<juce::Component*> { &pianoRoll, &mixer, &keysEditor, &effectsPanel })
         panel->addMouseListener (this, true); // a click inside a panel makes it the active one
     addChildComponent (keysEditor);
+    addChildComponent (effectsPanel);
     keysEditor.onChange = [this]
     {
         if (onKeymapEdited)
@@ -253,16 +273,11 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
 
     setRole (playButton, Role::primary);
     playButton.onClick = [this] { run ("transport.toggle"); };
-    waveButton.onClick = [this]
-    {
-        run ("synth.waveform", { { "square", ! session.selectedChannelRef().acid.square.load() },
-                                 { "channel", session.selectedChannel.load() + 1 } });
-    };
     sampleButton.onClick = [this] { actions.chooseSample (session.selectedChannel.load()); };
     newButton.onClick = [this] { actions.newProject(); };
     openButton.onClick = [this] { actions.openProject(); };
     saveButton.onClick = [this] { actions.save(); };
-    for (auto* b : { &playButton, &waveButton, &sampleButton, &newButton, &openButton, &saveButton })
+    for (auto* b : { &playButton, &sampleButton, &newButton, &openButton, &saveButton })
     {
         b->setMouseClickGrabsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -274,6 +289,8 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
         s.setSliderStyle (juce::Slider::RotaryVerticalDrag);
         s.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
         s.setRange (knob.min, knob.max, juce::String (knob.argument) == "semitones" ? 1.0 : 0.0);
+        if (juce::String (knob.argument) == "seconds")
+            s.setSkewFactorFromMidPoint (0.06); // glide: the short, 303-like times get most of the travel
         s.setMouseDragSensitivity (200);
         s.setDoubleClickReturnValue (true, knob.defaultValue);
         s.setValue (knob.read (session.selectedChannelRef()), juce::dontSendNotification);
@@ -363,7 +380,6 @@ PatternView::Snapshot PatternView::takeSnapshot() const
     s.currentStep = s.playing && s.playingPattern == s.selected ? session.transport.currentStep.load() : -1;
     s.bpm = session.transport.bpm.load();
     s.swing = session.transport.swing.load();
-    s.square = session.selectedChannelRef().acid.square.load();
     s.patternName = session.project.patternNames[static_cast<size_t> (s.selected)];
     s.documentTitle = actions.documentTitle();
     return s;
@@ -396,7 +412,6 @@ void PatternView::timerCallback()
     if (const auto keyText = session.project.key.active() ? session.project.key.describe() : juce::String ("no key");
         keyButton.getButtonText() != keyText)
         keyButton.setButtonText (keyText);
-    waveButton.setButtonText (now.square ? "square" : "saw");
 
     if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
         if (window->getName() != "tekno-daw  /  " + now.documentTitle)
@@ -473,7 +488,7 @@ void PatternView::resized()
     auto column = leftColumn.reduced (space::gutter);
     projectArea = column.removeFromTop (112.0f);
     column.removeFromTop (space::gutter);
-    synthArea = column.removeFromTop (36.0f + knobCellHeight * 3.0f + shape::pillHeight);
+    synthArea = column.removeFromTop (36.0f + knobCellHeight * 4.0f);
     column.removeFromTop (space::gutter);
     audioArea = column.removeFromBottom (76.0f);
     column.removeFromBottom (space::gutter);
@@ -516,6 +531,8 @@ void PatternView::resized()
             pianoRoll.setBounds (inner.toNearestInt());
         else if (tile.panel == View::mixer)
             mixer.setBounds (inner.toNearestInt());
+        else if (tile.panel == View::effects)
+            effectsPanel.setBounds (inner.toNearestInt());
         else
             keysEditor.setBounds (inner.toNearestInt());
     }
@@ -536,6 +553,7 @@ void PatternView::resized()
     mixer.setVisible (tiles.isOpen (View::mixer));
     pianoRoll.setVisible (tiles.isOpen (View::pianoRoll));
     keysEditor.setVisible (tiles.isOpen (View::keys));
+    effectsPanel.setVisible (tiles.isOpen (View::effects));
     editKeysButton.setBounds (keysArea.withHeight (28.0f)
                                   .withLeft (keysArea.getRight() - 56.0f)
                                   .withSizeKeepingCentre (56.0f, shape::pillHeightCompact)
@@ -720,19 +738,13 @@ void PatternView::layoutKnobs()
         else if (knob.group == Knob::Group::sampler)
             area = cell (0, samplerIndex++);
         else
-            area = cell (2, mixerIndex++);
+            area = cell (3, mixerIndex++); // the mixer row is always the fourth, so it doesn't jump
         knob.slider.setBounds (
             area.withHeight (knobSize + 8.0f).withSizeKeepingCentre (knobSize, knobSize).toNearestInt());
         knob.slider.setVisible (knobVisible (knob));
     }
 
     const auto sampler = shown.isSampler (shown.selectedChannel);
-    const auto buttonRow = grid.getY() + knobCellHeight * 3.0f;
-    waveButton.setBounds (
-        juce::Rectangle<float> (grid.getX(), buttonRow, cellWidth * 2.0f - space::gap, shape::pillHeight)
-            .toNearestInt());
-    waveButton.setVisible (! sampler && shown.channels > 0);
-
     const auto sampleRow = cell (1, 0).withWidth (grid.getWidth());
     sampleNameArea = sampleRow.withHeight (22.0f).translated (0.0f, space::unit * 2.0f);
     sampleButton.setBounds (juce::Rectangle<float> (grid.getX(), sampleNameArea.getBottom() + space::unit * 2.0f,
@@ -1016,6 +1028,15 @@ void PatternView::paintContent (juce::Graphics& g) const
         drawText (g,
                   juce::String (static_cast<int> (keymap.all().size())) +
                       " keys  /  a key runs a command line, like the terminal  /  F6 to go back",
+                  type::meta, muted, metaArea);
+    }
+    else if (active == View::effects)
+    {
+        drawText (g, "Effects", type::pageTitle, ink, titleArea, juce::Justification::bottomLeft);
+        drawText (g,
+                  (effectsPanel.showsMaster() ? juce::String ("master")
+                                              : shown.channelNames[static_cast<size_t> (shown.selectedChannel)]) +
+                      "  /  inserts, in the order the sound goes through them  /  F8",
                   type::meta, muted, metaArea);
     }
     else if (active == View::mixer)
@@ -1615,6 +1636,7 @@ juce::StringArray PatternView::activeKeyContexts() const
     contexts.add (active == View::pianoRoll ? "pianoroll"
                   : active == View::mixer   ? "mixer"
                   : active == View::keys    ? "keys"
+                  : active == View::effects ? "effects"
                                             : "pattern");
     contexts.add ("global");
     return contexts;

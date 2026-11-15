@@ -5,6 +5,7 @@ configure_file(BuildInfo.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/core/BuildI
 add_library(tekno_core STATIC
     Version.cpp
     model/Channel.cpp
+    model/Effects.cpp
     model/NoteNames.cpp
     model/Pattern.cpp
     model/SampleLibrary.cpp
@@ -16,6 +17,9 @@ add_library(tekno_core STATIC
     commands/SessionCommands.cpp
     dsp/AcidVoice.cpp
     dsp/BuiltinKit.cpp
+    dsp/Distortion.cpp
+    dsp/PingPongDelay.cpp
+    dsp/PlateReverb.cpp
     dsp/Sampler.cpp
     engine/AudioEngine.cpp
     engine/OfflineRender.cpp

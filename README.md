@@ -4,8 +4,8 @@ An open source, pattern-based DAW for **acid / mental tekno** — built in the s
 FL Studio's workflow, with a 303-style acid synth wired in from day one.
 
 > **Status: pre-alpha.** A channel rack of up to 16 channels — 303-style acid synths with an
-> antialiased drive, and a drum sampler with a built-in kit — through a mixer with volume, pan, mute
-> and solo. 16 patterns of 1 to 64 steps with accent, slide and tie, swing, pattern changes on the bar,
+> antialiased drive, and a drum sampler with a built-in kit — through a mixer with volume, pan, mute,
+> solo and insert effects (distortion, ping-pong delay, plate reverb). 16 patterns of 1 to 64 steps with accent, slide and tie, swing, pattern changes on the bar,
 > undo of every edit, a built-in command terminal, and projects saved as readable `.tekno` files.
 
 ## Goals
@@ -29,7 +29,7 @@ and project version history.
 | ✅ M1 | MVP: an acid synth playing a 16-step pattern |
 | ✅ M2 | Real sequencer: patterns, accent / slide / tie, swing, project files, drive, terminal |
 | ✅ M3 | Channel rack, drum sampler, mixer, piano roll, keymaps per context, tiling panels |
-| ▶ M4 | VST3 hosting (out of process) and MIDI input |
+| ▶ M4 | Native effects (✅), live play from the PC keyboard and MIDI, macros, VST3 hosting |
 | M5 | Audio export, full project format, more import formats |
 | M6 | Arrangement and automation |
 | M7 | Polish and packaging (AppImage, Flatpak, AUR) |
@@ -120,12 +120,30 @@ tekno-daw --smoke-test         open the window and quit after a second
 tekno-daw --version
 ```
 
+### Effects
+
+Each channel, and the master, has four insert slots, before the fader. Open the effects panel with F8:
+"+ add" puts a distortion, a ping-pong delay or a plate reverb in a slot, and each card has its knobs,
+on/off, move left/right and remove. A light on each card shows when it is making sound, and turns red
+when a distortion clips hard. The mixer shows each strip's effects by name.
+
+- **Distortion** — hard clip, foldback or bitcrush, with drive, tone, bits, rate, mix and output. Clip and
+  fold are antialiased (ADAA), crush aliases on purpose. Made for distorted kicks and sub-basses.
+- **Ping-pong delay** — synced to the tempo in steps (3 = a dotted eighth), feedback up to 1.1 for dub
+  runaways (it stays bounded), a tone and a low cut in the feedback, ping-pong amount.
+- **Plate reverb** — Jon Dattorro's plate (JAES 1997): decay, damping, predelay, low cut, mix.
+
+From the terminal: `fx.add delay`, `fx.set 1 feedback 0.8`, `fx.set 2 mode fold`, `fx.bypass 1 on`,
+`fx.move 2 1`, `fx.remove 1`, `fx.list`, with `channel=N` or `master=on`. A project can have up to 8
+delays and 8 reverbs. The acid synth also has a **shape** knob (saw to square, morphing) and a **glide**
+knob (how long a slide takes). New projects start at 170 BPM.
+
 ### Panels side by side
 
 The step sequencer, the piano roll, the mixer and the keys editor are panels, tiled like a tiling window
-manager: Alt+F6 / Alt+F7 / Alt+F9 / Alt+F10 open one beside the active panel (splitting it along its
+manager: Alt+F6 / Alt+F7 / Alt+F8 / Alt+F9 / Alt+F10 open one beside the active panel (splitting it along its
 longer side), Alt+Q closes the active one, Alt+Left / Alt+Right move between them, and the gaps between
-panels can be dragged. F6 / F7 / F9 / F10 still swap the active panel for another. The active panel has a
+panels can be dragged. F6 / F7 / F8 / F9 / F10 still swap the active panel for another. The active panel has a
 dark frame, and it decides which keys apply. The layout is remembered. From the terminal: `ui.tile mixer`,
 `ui.tile.close`, `ui.tile.focus next`, `ui.tile.single`.
 

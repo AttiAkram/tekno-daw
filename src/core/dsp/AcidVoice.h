@@ -30,8 +30,9 @@ public:
         float envMod = 0.6f;
         float decay = 0.45f;
         float accent = 0.7f;
-        bool square = false;
+        float shape = 0.0f; // 0 saw .. 1 square
         float drive = 0.0f;
+        float glide = 0.035f; // slide time, seconds
     };
 
     void prepare (double sampleRate) noexcept;
@@ -61,6 +62,7 @@ private:
     double phase = 0.0;
     float pitch = 45.0f, targetPitch = 45.0f; // in semitones (MIDI note numbers)
     float glide = 0.0f;
+    float glideSeconds = 0.0f; // what `glide` was computed for
     bool sliding = false;
 
     bool gate = false;

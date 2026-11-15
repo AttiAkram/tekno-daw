@@ -37,7 +37,8 @@ void makeInteresting (Session& s)
     synth.decay = 0.7f;
     synth.accent = 1.0f;
     synth.drive = 0.4f;
-    synth.square = true;
+    synth.shape = 0.4f; // a blend: saved as a number, read back the same
+    synth.glide = 0.12f;
     s.channel (acid).mixer.pan = -0.25f;
     s.channel (0).sampler.tune = -3.0f;
     s.channel (0).sampler.decay = 0.4f;
@@ -193,7 +194,7 @@ TEST_CASE ("a version 1 project from M2 still opens, as one acid channel", "[cor
     REQUIRE (project::fromText (version1File, s).wasOk());
     REQUIRE (s.channelCount() == 1);
     CHECK (s.channel (0).kind.load() == InstrumentKind::acid);
-    CHECK (s.channel (0).acid.square.load());
+    CHECK (s.channel (0).acid.shape.load() == 1.0f); // "square" in an old file
     CHECK (s.channel (0).acid.drive.load() == 0.25f);
     CHECK (s.transport.bpm.load() == 140.0);
     CHECK (s.selected.load() == 1);

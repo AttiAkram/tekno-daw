@@ -13,7 +13,6 @@ namespace tekno::core::dsp
 namespace
 {
     constexpr float accentDecaySeconds = 0.2f; // accented notes always snap shut quickly, like the 303
-    constexpr float slideSeconds = 0.035f;     // fixed-time glide, independent of the interval
     constexpr float attackSeconds = 0.002f;
     constexpr float releaseSeconds = 0.008f;
     constexpr float holdSeconds = 3.0f; // slow fall of the amp while the gate is held
@@ -69,7 +68,8 @@ void AcidVoice::prepare (double newSampleRate) noexcept
     sampleRate = newSampleRate;
     filter.setSampleRate (sampleRate);
     smoothing = coefficientFor (smoothingSeconds, sampleRate);
-    glide = coefficientFor (slideSeconds, sampleRate);
+    glideSeconds = target.glide;
+    glide = coefficientFor (glideSeconds, sampleRate);
     attack = coefficientFor (attackSeconds, sampleRate);
     release = coefficientFor (releaseSeconds, sampleRate);
     ampHoldDecay = decayFor (holdSeconds, sampleRate);
@@ -129,6 +129,14 @@ float AcidVoice::process() noexcept
     smoothed.envMod += (target.envMod - smoothed.envMod) * smoothing;
     smoothed.accent += (target.accent - smoothed.accent) * smoothing;
     smoothed.drive += (target.drive - smoothed.drive) * smoothing;
+    smoothed.shape += (target.shape - smoothed.shape) * smoothing;
+
+    // Glide time: a fixed time whatever the interval, recomputed only when the knob moves.
+    if (! juce::exactlyEqual (target.glide, glideSeconds))
+    {
+        glideSeconds = target.glide;
+        glide = coefficientFor (std::max (0.001f, glideSeconds), sampleRate);
+    }
 
     // Pitch, with slide.
     if (sliding)
@@ -141,14 +149,22 @@ float AcidVoice::process() noexcept
     if (phase >= 1.0)
         phase -= 1.0;
 
+    // Saw, square, or a blend: at exactly 0 or 1 only that wave is computed, as before the morph
+    // existed, so old projects sound the same to the bit.
+    auto square = [&]
+    { return (phase < 0.5 ? 1.0 : -1.0) + polyBlep (phase, dt) - polyBlep (std::fmod (phase + 0.5, 1.0), dt); };
+    auto saw = [&] { return 2.0 * phase - 1.0 - polyBlep (phase, dt); };
+    // The pure waves follow the knob at once (as the old saw/square switch did); only in-between
+    // values are smoothed.
     double osc;
-    if (target.square)
-    {
-        osc = (phase < 0.5 ? 1.0 : -1.0) + polyBlep (phase, dt) - polyBlep (std::fmod (phase + 0.5, 1.0), dt);
-    }
+    if (target.shape <= 0.0f)
+        osc = saw();
+    else if (target.shape >= 1.0f)
+        osc = square();
     else
     {
-        osc = 2.0 * phase - 1.0 - polyBlep (phase, dt);
+        const auto mix = static_cast<double> (smoothed.shape);
+        osc = saw() * (1.0 - mix) + square() * mix;
     }
 
     // Filter: the envelope sweeps the cutoff up by octaves; accent pushes it further and harder.

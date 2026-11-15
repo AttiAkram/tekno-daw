@@ -23,6 +23,7 @@ void Session::clearProject()
     transport.bpm = TransportState::defaultBpm;
     transport.swing = TransportState::minSwing;
     master.volumeDb = 0.0f;
+    master.effects.store ({});
 
     numChannels = 0;
     for (int c = 0; c < maxChannels; ++c)
@@ -54,12 +55,12 @@ void Session::loadDefaultProject()
         channel (index).mixer.volumeDb = volumeDb;
         return index;
     };
-    const auto kick = addSampler ("kick", "kick", -6.0f);
-    const auto hat = addSampler ("hat", "hat", -16.0f);
-    addSampler ("open hat", "openhat", -18.0f);
-    const auto clap = addSampler ("clap", "clap", -13.0f);
+    const auto kick = addSampler ("kick", "kick", -7.0f);
+    const auto hat = addSampler ("hat", "hat", -17.0f);
+    addSampler ("open hat", "openhat", -19.0f);
+    const auto clap = addSampler ("clap", "clap", -14.0f);
     const auto acid = addChannel (InstrumentKind::acid, "acid");
-    channel (acid).mixer.volumeDb = -8.0f;
+    channel (acid).mixer.volumeDb = -9.0f;
 
     project.patternNames[0] = "acid 01";
     auto& first = pattern (0);
@@ -113,6 +114,7 @@ void Session::clearChannelSlot (int index)
     c.acid.store ({});
     c.sampler.store ({});
     c.mixer.store ({});
+    c.effects.store ({});
     c.sample = nullptr;
     c.peak = 0.0f;
     ++c.generation;
@@ -129,6 +131,7 @@ juce::String Session::writeChannel (int index, const ChannelData& data)
     c.acid.store (data.acid);
     c.sampler.store (data.sampler);
     c.mixer.store (data.mixer);
+    c.effects.store (data.effects);
     c.peak = 0.0f;
     for (size_t p = 0; p < data.lanes.size(); ++p)
         patterns[p].lane (index).setNotes (data.lanes[p]);
@@ -148,6 +151,7 @@ ChannelData Session::captureChannel (int index) const
     data.acid = c.acid.load();
     data.sampler = c.sampler.load();
     data.mixer = c.mixer.load();
+    data.effects = c.effects.load();
     for (size_t p = 0; p < data.lanes.size(); ++p)
         data.lanes[p] = patterns[p].lane (index).notes();
     return data;

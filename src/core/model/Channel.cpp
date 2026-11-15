@@ -23,7 +23,7 @@ const char* instrumentName (InstrumentKind kind) noexcept
 AcidSettings AcidParams::load() const noexcept
 {
     return { cutoff.load (relaxed), resonance.load (relaxed), envMod.load (relaxed), decay.load (relaxed),
-             accent.load (relaxed), drive.load (relaxed),     square.load (relaxed) };
+             accent.load (relaxed), drive.load (relaxed),     shape.load (relaxed),  glide.load (relaxed) };
 }
 
 void AcidParams::store (const AcidSettings& s) noexcept
@@ -34,7 +34,8 @@ void AcidParams::store (const AcidSettings& s) noexcept
     decay.store (s.decay, relaxed);
     accent.store (s.accent, relaxed);
     drive.store (s.drive, relaxed);
-    square.store (s.square, relaxed);
+    shape.store (s.shape, relaxed);
+    glide.store (s.glide, relaxed);
 }
 
 SamplerSettings SamplerParams::load() const noexcept

@@ -13,6 +13,9 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 
 #include "core/dsp/AcidVoice.h"
+#include "core/dsp/Distortion.h"
+#include "core/dsp/PingPongDelay.h"
+#include "core/dsp/PlateReverb.h"
 #include "core/dsp/Sampler.h"
 #include "core/model/Session.h"
 
@@ -111,6 +114,27 @@ private:
         }
     };
 
+    static constexpr int maxChunk = 512;                    // render() works in pieces of at most this many samples
+    static constexpr int strips = Session::maxChannels + 1; // every channel, then the master
+    static constexpr int masterStrip = Session::maxChannels;
+
+    /** What the engine knows about one insert slot: which effect, and which instance of the pool. */
+    struct SlotState
+    {
+        EffectType type = EffectType::none;
+        std::uint32_t generation = ~0u;
+        std::uint32_t stripGeneration = ~0u;
+        int instance = -1; // into the pool of that type; -1 = none (the pool was full)
+    };
+
+    void renderChunk (float* const* outputs, int numOutputs, int offset, int numSamples) noexcept;
+    float* stripBuffer (int strip, int side) noexcept
+    {
+        return stripScratch.data() + (static_cast<size_t> (strip) * 2 + static_cast<size_t> (side)) * maxChunk;
+    }
+    void runEffects (int strip, EffectChain& chain, std::uint32_t stripGeneration, float* left, float* right,
+                     int numSamples, double bpm) noexcept;
+    void syncSlot (int strip, int index, const EffectSlot& slot, std::uint32_t stripGeneration) noexcept;
     void startStep (int index, double straightLength, int channels) noexcept;
     void collectNotes (ChannelPlayer& player, const Lane& lane, int index, int lengthInTicks) noexcept;
     void play (ChannelPlayer& player, int channel, const Note& note) noexcept;
@@ -131,6 +155,16 @@ private:
     float masterGain = 1.0f;
     float velocityGlide = 1.0f;    // per-sample step of the acid velocity glide (about 2 ms)
     std::uint64_t lastPreview = 0; // number of the last audition request played
+
+    // Effects: buffers for each strip's chunk, and a pool of effect instances owned by this engine
+    // (two engines never share effect state). Allocated in prepare(), never on the audio thread.
+    std::vector<float> stripScratch;
+    std::array<std::array<SlotState, effectSlots>, strips> slotStates {};
+    std::array<dsp::Distortion, strips * effectSlots> distortions; // one per slot: they are small
+    std::vector<dsp::PingPongDelay> delays;
+    std::vector<dsp::PlateReverb> reverbs;
+    std::array<int, maxDelays> delayOwner {};
+    std::array<int, maxReverbs> reverbOwner {};
 
     void startPreview (int channels) noexcept;
 

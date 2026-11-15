@@ -24,7 +24,8 @@ namespace
         c.envMod = s.envMod;
         c.decay = s.decay;
         c.accent = s.accent;
-        c.square = s.square;
+        c.shape = s.shape;
+        c.glide = s.glide;
         c.drive = s.drive;
         return c;
     }
@@ -72,6 +73,22 @@ void AudioEngine::prepare (double newSampleRate) noexcept
         p.acidGain = p.acidGainTarget = 1.0f;
     }
     velocityGlide = static_cast<float> (1.0 - std::exp (-1.0 / (0.002 * sampleRate)));
+
+    // Effects: scratch buffers and the pool, sized for this sample rate. prepare() runs before audio
+    // starts (or when the device restarts), never inside the callback.
+    stripScratch.assign (static_cast<size_t> (strips) * 2 * maxChunk, 0.0f);
+    for (auto& d : distortions)
+        d.prepare (sampleRate);
+    delays.resize (maxDelays);
+    for (auto& d : delays)
+        d.prepare (sampleRate);
+    reverbs.resize (maxReverbs);
+    for (auto& r : reverbs)
+        r.prepare (sampleRate);
+    delayOwner.fill (-1);
+    reverbOwner.fill (-1);
+    for (auto& strip : slotStates)
+        strip.fill ({});
     lastPreview = session.preview.load() >> 32; // an old request is not played again
     wasPlaying = false;
     step = -1;
@@ -110,6 +127,86 @@ void AudioEngine::syncPlayer (ChannelPlayer& player, const Channel& channel) noe
 void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples) noexcept
 {
     const juce::ScopedNoDenormals noDenormals;
+    for (int offset = 0; offset < numSamples; offset += maxChunk)
+        renderChunk (outputs, numOutputs, offset, std::min (maxChunk, numSamples - offset));
+    session.audioBlocks.fetch_add (1, std::memory_order_release);
+}
+
+void AudioEngine::syncSlot (int strip, int index, const EffectSlot& slot, std::uint32_t stripGeneration) noexcept
+{
+    auto& state = slotStates[static_cast<size_t> (strip)][static_cast<size_t> (index)];
+    const auto type = slot.type.load (relaxed);
+    const auto generation = slot.generation.load (std::memory_order_acquire);
+    if (type == state.type && generation == state.generation && stripGeneration == state.stripGeneration)
+        return;
+
+    // Another effect (or another channel) in this slot: give back the old instance, take a fresh one.
+    const auto owner = strip * effectSlots + index;
+    if (state.type == EffectType::delay && state.instance >= 0)
+        delayOwner[static_cast<size_t> (state.instance)] = -1;
+    if (state.type == EffectType::reverb && state.instance >= 0)
+        reverbOwner[static_cast<size_t> (state.instance)] = -1;
+    state = { type, generation, stripGeneration, -1 };
+
+    auto take = [owner] (auto& owners) -> int
+    {
+        for (size_t i = 0; i < owners.size(); ++i)
+            if (owners[i] < 0)
+            {
+                owners[i] = owner;
+                return static_cast<int> (i);
+            }
+        return -1; // full: the slot stays silent (the commands keep this from happening)
+    };
+    switch (type)
+    {
+    case EffectType::distortion:
+        state.instance = owner;
+        distortions[static_cast<size_t> (owner)].reset();
+        break;
+    case EffectType::delay:
+        if ((state.instance = take (delayOwner)) >= 0)
+            delays[static_cast<size_t> (state.instance)].reset();
+        break;
+    case EffectType::reverb:
+        if ((state.instance = take (reverbOwner)) >= 0)
+            reverbs[static_cast<size_t> (state.instance)].reset();
+        break;
+    case EffectType::none:
+        break;
+    }
+}
+
+void AudioEngine::runEffects (int strip, EffectChain& chain, std::uint32_t stripGeneration, float* left, float* right,
+                              int numSamples, double bpm) noexcept
+{
+    for (int index = 0; index < effectSlots; ++index)
+    {
+        auto& slot = chain.slots[static_cast<size_t> (index)];
+        syncSlot (strip, index, slot, stripGeneration);
+        const auto& state = slotStates[static_cast<size_t> (strip)][static_cast<size_t> (index)];
+        if (state.type == EffectType::none || state.instance < 0 || slot.bypass.load (relaxed))
+            continue;
+
+        std::array<float, maxEffectParams> params {};
+        for (size_t p = 0; p < params.size(); ++p)
+            params[p] = slot.values[p].load (relaxed);
+
+        dsp::EffectMeters meters;
+        const auto instance = static_cast<size_t> (state.instance);
+        if (state.type == EffectType::distortion)
+            meters = distortions[instance].process (left, right, numSamples, params);
+        else if (state.type == EffectType::delay)
+            meters = delays[instance].process (left, right, numSamples, params, bpm);
+        else
+            meters = reverbs[instance].process (left, right, numSamples, params);
+        raisePeak (slot.activity, meters.peak);
+        raisePeak (slot.clip, meters.clip);
+    }
+}
+
+void AudioEngine::renderChunk (float* const* outputs, int numOutputs, int offset, int numSamples) noexcept
+{
     auto& transport = session.transport;
 
     const auto playing = transport.playing.load (relaxed);
@@ -200,12 +297,10 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
                 p.acid.gateOff();
         }
 
-        const auto ramp = static_cast<float> (i + 1) * rampStep;
-        float left = 0.0f, right = 0.0f;
+        // Each channel's dry sound into its own buffer: effects and faders come after the loop.
         for (int c = 0; c < channels; ++c)
         {
-            const auto slot = static_cast<size_t> (c);
-            auto& p = players[slot];
+            auto& p = players[static_cast<size_t> (c)];
             float l = 0.0f, r = 0.0f;
             if (p.kind == InstrumentKind::acid)
             {
@@ -215,29 +310,56 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
             }
             else
                 p.sampler.process (l, r);
-
-            l *= p.gainLeft + (targetLeft[slot] - p.gainLeft) * ramp;
-            r *= p.gainRight + (targetRight[slot] - p.gainRight) * ramp;
-            peaks[slot] = std::max (peaks[slot], std::max (std::abs (l), std::abs (r)));
-            left += l;
-            right += r;
+            stripBuffer (c, 0)[i] = l;
+            stripBuffer (c, 1)[i] = r;
         }
+    }
 
+    // Channels: inserts, then the fader (ramped across the chunk), summed into the master in channel
+    // order, so with no effects every sample is computed exactly as before effects existed.
+    auto* masterLeft = stripBuffer (masterStrip, 0);
+    auto* masterRight = stripBuffer (masterStrip, 1);
+    std::fill (masterLeft, masterLeft + numSamples, 0.0f);
+    std::fill (masterRight, masterRight + numSamples, 0.0f);
+    for (int c = 0; c < channels; ++c)
+    {
+        const auto slot = static_cast<size_t> (c);
+        auto& p = players[slot];
+        auto* left = stripBuffer (c, 0);
+        auto* right = stripBuffer (c, 1);
+        auto& channel = session.channel (c);
+        runEffects (c, channel.effects, channel.generation.load (relaxed), left, right, numSamples, bpm);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const auto ramp = static_cast<float> (i + 1) * rampStep;
+            const auto l = left[i] * (p.gainLeft + (targetLeft[slot] - p.gainLeft) * ramp);
+            const auto r = right[i] * (p.gainRight + (targetRight[slot] - p.gainRight) * ramp);
+            peaks[slot] = std::max (peaks[slot], std::max (std::abs (l), std::abs (r)));
+            masterLeft[i] += l;
+            masterRight[i] += r;
+        }
+    }
+
+    // Master: inserts, then its fader, then the device.
+    runEffects (masterStrip, session.master.effects, 0, masterLeft, masterRight, numSamples, bpm);
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const auto ramp = static_cast<float> (i + 1) * rampStep;
         const auto master = masterGain + (masterTarget - masterGain) * ramp;
-        left *= master;
-        right *= master;
+        const auto left = masterLeft[i] * master;
+        const auto right = masterRight[i] * master;
         masterPeakLeft = std::max (masterPeakLeft, std::abs (left));
         masterPeakRight = std::max (masterPeakRight, std::abs (right));
 
         if (numOutputs == 1)
         {
             if (outputs[0] != nullptr)
-                outputs[0][i] = (left + right) * 0.5f;
+                outputs[0][offset + i] = (left + right) * 0.5f;
         }
         else
             for (int ch = 0; ch < numOutputs; ++ch)
                 if (outputs[ch] != nullptr)
-                    outputs[ch][i] = ch == 0 ? left : (ch == 1 ? right : 0.0f);
+                    outputs[ch][offset + i] = ch == 0 ? left : (ch == 1 ? right : 0.0f);
     }
 
     for (int c = 0; c < channels; ++c)
@@ -250,8 +372,6 @@ void AudioEngine::render (float* const* outputs, int numOutputs, int numSamples)
     masterGain = masterTarget;
     raisePeak (session.master.peakLeft, masterPeakLeft);
     raisePeak (session.master.peakRight, masterPeakRight);
-
-    session.audioBlocks.fetch_add (1, std::memory_order_release);
 }
 
 void AudioEngine::startPreview (int channels) noexcept

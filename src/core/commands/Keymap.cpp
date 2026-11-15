@@ -35,7 +35,8 @@ namespace
 
 const juce::StringArray& Keymap::contexts()
 {
-    static const juce::StringArray list { "global", "pattern", "pianoroll", "mixer", "keys", "acid", "sampler" };
+    static const juce::StringArray list { "global",  "pattern", "pianoroll", "mixer",
+                                          "effects", "keys",    "acid",      "sampler" };
     return list;
 }
 
@@ -112,10 +113,9 @@ juce::String Keymap::toJson() const
     for (size_t i = 0; i < sorted.size(); ++i)
     {
         const auto& b = sorted[i];
-        lines.add ("    { \"context\": " + quoted (b.context) + ", \"key\": " + quoted (b.key) +
-                   ", \"command\": " + quoted (b.command) +
-                   (b.label.isNotEmpty() ? ", \"label\": " + quoted (b.label) : juce::String()) + " }" +
-                   (i + 1 < sorted.size() ? "," : ""));
+        lines.add ("    { \"context\": " + quoted (b.context) + ", \"key\": " + quoted (b.key) + ", \"command\": " +
+                   quoted (b.command) + (b.label.isNotEmpty() ? ", \"label\": " + quoted (b.label) : juce::String()) +
+                   " }" + (i + 1 < sorted.size() ? "," : ""));
     }
     lines.add ("  ]");
     lines.add ("}");

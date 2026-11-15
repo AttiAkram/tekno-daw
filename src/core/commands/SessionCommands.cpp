@@ -209,6 +209,49 @@ namespace
                juce::String (static_cast<int> (args["at"]));
     }
 
+    /** The insert chain a command acts on: master=on, or a channel (the selected one by default). */
+    struct ChainTarget
+    {
+        EffectChain* chain = nullptr;
+        int channel = -1; // -1 = the master
+        juce::String label, error;
+    };
+
+    ChainTarget chainArg (Session& session, const CommandArgs& args)
+    {
+        if (args.contains ("master") && static_cast<bool> (args["master"]))
+            return { &session.master.effects, -1, "master", {} };
+        const auto target = channelArg (session, args);
+        if (target.index < 0)
+            return { nullptr, -1, {}, target.error };
+        return { &session.channel (target.index).effects,
+                 target.index,
+                 session.project.channelNames[static_cast<size_t> (target.index)],
+                 {} };
+    }
+
+    /** Changes a chain; `change` returns an error or an empty string, and may leave a note. Undo puts the
+        whole chain back. */
+    CommandOutcome editChain (Session& session, const CommandArgs& args,
+                              const std::function<juce::String (EffectChainSettings&, juce::String&)>& change)
+    {
+        const auto target = chainArg (session, args);
+        if (target.chain == nullptr)
+            return CommandOutcome::fail (target.error);
+        const auto before = target.chain->load();
+        auto after = before;
+        juce::String note;
+        if (const auto problem = change (after, note); problem.isNotEmpty())
+            return CommandOutcome::fail (problem);
+        target.chain->store (after);
+        const auto channel = target.channel;
+        auto outcome = CommandOutcome::ok (
+            [&session, channel, before]
+            { (channel < 0 ? session.master.effects : session.channel (channel).effects).store (before); });
+        outcome.note = note.isEmpty() ? juce::String() : note + " of " + target.label;
+        return channel < 0 ? outcome : withTargets (std::move (outcome), args, -1, channel);
+    }
+
     /** Sets an atomic and returns how to put the old value back. */
     template <typename T, typename V> CommandOutcome setUndoable (std::atomic<T>& target, V newValue)
     {
@@ -820,6 +863,194 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
         },
         true);
 
+    // --- effects (inserts on a channel or on the master) ---------------------------------------
+    const CommandParam masterTarget { "master", Type::boolean, 0, 1, "on = the master's inserts", true };
+    const CommandParam slotParam { "slot", Type::integer, 1, effectSlots, "insert slot, 1-4" };
+
+    add (
+        registry, "fx.add", "Add an effect to a channel (or master=on): distortion, delay or reverb",
+        { { "type", Type::text, 0, 0, "distortion, delay or reverb" },
+          { "slot", Type::integer, 1, effectSlots, "which slot (default: the first free)", true },
+          channelTarget,
+          masterTarget },
+        [&session] (const CommandArgs& args)
+        {
+            const auto type = effectFromName (args["type"].toString());
+            if (! type)
+                return CommandOutcome::fail ("unknown effect '" + args["type"].toString().trim() +
+                                             "': use distortion, delay or reverb");
+            // Each engine has a fixed pool of the big effects.
+            const auto limit = *type == EffectType::delay ? maxDelays : *type == EffectType::reverb ? maxReverbs : 1000;
+            auto inUse = 0;
+            for (int c = 0; c <= session.channelCount(); ++c)
+            {
+                const auto& chain = c == session.channelCount() ? session.master.effects : session.channel (c).effects;
+                for (const auto& slot : chain.slots)
+                    inUse += slot.type.load() == *type ? 1 : 0;
+            }
+            if (inUse >= limit)
+                return CommandOutcome::fail ("a project can have at most " + juce::String (limit) + " " +
+                                             effectInfo (*type).name + "s");
+
+            return editChain (session, args,
+                              [&args, type] (EffectChainSettings& chain, juce::String& note)
+                              {
+                                  auto index = -1;
+                                  if (args.contains ("slot"))
+                                  {
+                                      index = static_cast<int> (args["slot"]) - 1;
+                                      if (chain[static_cast<size_t> (index)].type != EffectType::none)
+                                          return "slot " + juce::String (index + 1) + " already has " +
+                                                 effectInfo (chain[static_cast<size_t> (index)].type).name +
+                                                 ": fx.remove it first, or pick another slot";
+                                  }
+                                  else
+                                      for (int i = 0; i < effectSlots && index < 0; ++i)
+                                          if (chain[static_cast<size_t> (i)].type == EffectType::none)
+                                              index = i;
+                                  if (index < 0)
+                                      return juce::String ("all 4 slots are taken");
+                                  chain[static_cast<size_t> (index)] = EffectSettings::defaults (*type);
+                                  note =
+                                      juce::String (effectInfo (*type).name) + " in slot " + juce::String (index + 1);
+                                  return juce::String();
+                              });
+        },
+        true);
+    add (
+        registry, "fx.remove", "Remove the effect in a slot", { slotParam, channelTarget, masterTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editChain (session, args,
+                              [&args] (EffectChainSettings& chain, juce::String&)
+                              {
+                                  auto& slot = chain[static_cast<size_t> (static_cast<int> (args["slot"]) - 1)];
+                                  if (slot.type == EffectType::none)
+                                      return juce::String ("that slot is empty");
+                                  slot = {};
+                                  return juce::String();
+                              });
+        },
+        true);
+    add (
+        registry, "fx.set", "Set a parameter of an effect: fx.set 1 feedback 0.7, fx.set 1 mode fold",
+        { slotParam,
+          { "param", Type::text, 0, 0, "the parameter's name" },
+          { "value", Type::text, 0, 0, "a number, or a choice's name" },
+          channelTarget,
+          masterTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editChain (session, args,
+                              [&args] (EffectChainSettings& chain, juce::String&)
+                              {
+                                  auto& slot = chain[static_cast<size_t> (static_cast<int> (args["slot"]) - 1)];
+                                  if (slot.type == EffectType::none)
+                                      return juce::String ("that slot is empty");
+                                  const auto& info = effectInfo (slot.type);
+                                  const auto index = info.paramIndex (args["param"].toString().trim());
+                                  if (index < 0)
+                                  {
+                                      juce::StringArray names;
+                                      for (const auto& p : info.params)
+                                          names.add (p.name);
+                                      return juce::String (info.name) + " has no '" + args["param"].toString().trim() +
+                                             "': it has " + names.joinIntoString (", ");
+                                  }
+                                  const auto& param = info.params[static_cast<size_t> (index)];
+                                  const auto text = args["value"].toString().trim();
+                                  float value = 0.0f;
+                                  auto choice = -1;
+                                  for (size_t c = 0; c < param.choices.size(); ++c)
+                                      if (text.equalsIgnoreCase (param.choices[c]))
+                                          choice = static_cast<int> (c);
+                                  if (choice >= 0)
+                                      value = static_cast<float> (choice);
+                                  else if (text.containsOnly ("-+.0123456789") && text.isNotEmpty())
+                                      value = text.getFloatValue();
+                                  else
+                                      return "'" + text + "' is not a value for " + param.name;
+                                  if (value < param.min || value > param.max)
+                                      return juce::String (param.name) + " must be between " +
+                                             juce::String (param.min) + " and " + juce::String (param.max);
+                                  slot.values[static_cast<size_t> (index)] =
+                                      param.isChoice() ? std::round (value) : value;
+                                  return juce::String();
+                              });
+        },
+        true, true);
+    add (
+        registry, "fx.bypass", "Switch an effect off without removing it",
+        { slotParam, onParam, channelTarget, masterTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editChain (session, args,
+                              [&args] (EffectChainSettings& chain, juce::String&)
+                              {
+                                  auto& slot = chain[static_cast<size_t> (static_cast<int> (args["slot"]) - 1)];
+                                  if (slot.type == EffectType::none)
+                                      return juce::String ("that slot is empty");
+                                  slot.bypass = args["on"];
+                                  return juce::String();
+                              });
+        },
+        true);
+    add (
+        registry, "fx.move", "Move an effect to another slot (the order is the order of the sound)",
+        { slotParam, { "to", Type::integer, 1, effectSlots, "the new slot" }, channelTarget, masterTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editChain (session, args,
+                              [&args] (EffectChainSettings& chain, juce::String&)
+                              {
+                                  const auto from = static_cast<int> (args["slot"]) - 1,
+                                             to = static_cast<int> (args["to"]) - 1;
+                                  if (chain[static_cast<size_t> (from)].type == EffectType::none)
+                                      return juce::String ("that slot is empty");
+                                  const auto moving = chain[static_cast<size_t> (from)];
+                                  std::vector<EffectSettings> order (chain.begin(), chain.end());
+                                  order.erase (order.begin() + from);
+                                  order.insert (order.begin() + to, moving);
+                                  std::copy (order.begin(), order.end(), chain.begin());
+                                  return juce::String();
+                              });
+        },
+        true);
+    add (
+        registry, "fx.list", "Show the effects of a channel (or master=on)", { channelTarget, masterTarget },
+        [&session] (const CommandArgs& args)
+        {
+            const auto target = chainArg (session, args);
+            if (target.chain == nullptr)
+                return CommandOutcome::fail (target.error);
+            const auto& label = target.label;
+            juce::StringArray lines;
+            const auto settings = target.chain->load();
+            for (size_t i = 0; i < settings.size(); ++i)
+            {
+                const auto& slot = settings[i];
+                if (slot.type == EffectType::none)
+                    continue;
+                const auto& info = effectInfo (slot.type);
+                juce::String line;
+                line << (i + 1) << "  " << info.name << (slot.bypass ? " (bypassed)" : "") << ":";
+                for (size_t p = 0; p < info.params.size(); ++p)
+                {
+                    const auto& param = info.params[p];
+                    line
+                        << " " << param.name << "="
+                        << (param.isChoice()
+                                ? juce::String (param.choices[static_cast<size_t> (slot.values[p])])
+                                : juce::String (slot.values[p], 3).trimCharactersAtEnd ("0").trimCharactersAtEnd ("."));
+                }
+                lines.add (line);
+            }
+            auto outcome = CommandOutcome::ok();
+            outcome.note = lines.isEmpty() ? label + ": no effects" : label + "\n" + lines.joinIntoString ("\n");
+            return outcome;
+        },
+        false);
+
     // --- channels ---------------------------------------------------------------------------------
     add (
         registry, "channel.select", "Choose the channel the steps, knobs and commands act on",
@@ -940,17 +1171,22 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
                        [] (Channel& c) -> auto& { return c.acid.accent; });
     addChannelControl (registry, session, "synth.drive", "Distortion after the filter, the acid pedal", unitParam, acid,
                        [] (Channel& c) -> auto& { return c.acid.drive; });
+    addChannelControl (registry, session, "synth.shape", "Morph the oscillator from saw (0) to square (1)", unitParam,
+                       acid, [] (Channel& c) -> auto& { return c.acid.shape; });
+    addChannelControl (registry, session, "synth.glide", "How long a slide takes, in seconds",
+                       { "seconds", Type::number, AcidSettings::minGlide, AcidSettings::maxGlide, "0.005..0.5 s" },
+                       acid, [] (Channel& c) -> auto& { return c.acid.glide; });
     add (
-        registry, "synth.waveform", "Choose the oscillator: saw or square",
+        registry, "synth.waveform", "Choose the oscillator: saw or square (synth.shape blends them)",
         { { "square", Type::boolean, 0, 1, "true = square, false = saw" }, channelTarget },
         [&session] (const CommandArgs& args)
         {
             const auto target = channelArg (session, args, InstrumentKind::acid);
             if (target.index < 0)
                 return CommandOutcome::fail (target.error);
-            return withTargets (
-                setUndoable (session.channel (target.index).acid.square, static_cast<bool> (args["square"])), args, -1,
-                target.index);
+            return withTargets (setUndoable (session.channel (target.index).acid.shape,
+                                             static_cast<bool> (args["square"]) ? 1.0f : 0.0f),
+                                args, -1, target.index);
         },
         true);
 

@@ -22,6 +22,7 @@
 #include "ui/components/Terminal.h"
 #include "ui/components/ValueChip.h"
 #include "ui/theme/TeknoLookAndFeel.h"
+#include "ui/views/EffectsView.h"
 #include "ui/views/KeysView.h"
 #include "ui/views/MixerView.h"
 #include "ui/views/PianoRollView.h"
@@ -139,7 +140,6 @@ private:
         bool playing = false;
         double bpm = 0.0;
         float swing = 0.0f;
-        bool square = false;
         juce::String patternName, documentTitle;
         std::uint32_t freeLanes = 0; // a bit per channel whose notes the steps can't show (off the grid)
         std::array<std::vector<core::Note>, maxChannels> freeNotes; // those lanes' notes, for the miniature
@@ -201,11 +201,10 @@ private:
     std::array<juce::TextButton, 4> navButtons;
     ValueChip swingChip, bpmChip, lengthChip;
     juce::TextButton playButton { "play" };
-    juce::TextButton waveButton { "saw" };
     juce::TextButton sampleButton { "load" };
     juce::TextButton newButton { "new" }, openButton { "open" }, saveButton { "save" };
     juce::TextEditor renameEditor;
-    std::array<Knob, 11> knobs;
+    std::array<Knob, 13> knobs;
     Terminal terminal;
     bool terminalOpen = false;
     LevelMeters meters;
@@ -213,6 +212,7 @@ private:
     PianoRollView pianoRoll;
     core::Keymap& keymap;
     KeysView keysEditor;
+    EffectsView effectsPanel;
     juce::TextButton editKeysButton { "edit" };
     std::array<juce::TextButton, 4> snapButtons;
     juce::TextButton keyButton; // the project's key: opens a menu of roots and scales

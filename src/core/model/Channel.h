@@ -11,6 +11,8 @@
 #include <atomic>
 #include <cstdint>
 
+#include "core/model/Effects.h"
+
 namespace tekno::core
 {
 struct Sample;
@@ -36,7 +38,9 @@ struct AcidSettings
     float decay = 0.45f;
     float accent = 0.7f;
     float drive = 0.0f;
-    bool square = false; // false = saw
+    float shape = 0.0f;   // 0 = saw .. 1 = square, morphing in between
+    float glide = 0.035f; // seconds a slide takes
+    static constexpr float minGlide = 0.005f, maxGlide = 0.5f;
 
     bool operator== (const AcidSettings&) const = default;
 };
@@ -44,7 +48,7 @@ struct AcidSettings
 struct AcidParams
 {
     std::atomic<float> cutoff, resonance, envMod, decay, accent, drive;
-    std::atomic<bool> square;
+    std::atomic<float> shape, glide;
 
     AcidParams() noexcept { store ({}); }
     AcidSettings load() const noexcept;
@@ -104,6 +108,7 @@ struct Channel
     AcidParams acid;
     SamplerParams sampler;
     MixerParams mixer;
+    EffectChain effects; // inserts, before the fader
 
     /** The sampler's sound, owned by the SampleLibrary; null = silent. Replaced, never modified. */
     std::atomic<const Sample*> sample { nullptr };

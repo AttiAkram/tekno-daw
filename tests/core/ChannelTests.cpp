@@ -268,7 +268,7 @@ TEST_CASE ("mute, solo and pan shape the mix", "[core][mixer]")
 
     Session acidAlone;
     tekno::test::acidOnly (acidAlone);
-    acidAlone.channel (0).mixer.volumeDb = -8.0f;
+    acidAlone.channel (0).mixer.volumeDb = -9.0f;
     acidAlone.transport.playing = true;
     const auto reference = renderStereo (acidAlone, 48000);
     CHECK (acidSolo.left == reference.left); // solo = only that channel, bit for bit

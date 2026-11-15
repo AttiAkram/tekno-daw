@@ -294,12 +294,12 @@ private:
             const auto name = args["panel"].toString().trim().toLowerCase();
             const auto panel = ui::PatternView::viewFromName (name);
             if (! panel)
-                error = "unknown panel '" + name + "': use pattern, pianoroll, mixer or keys";
+                error = "unknown panel '" + name + "': use pattern, pianoroll, effects, mixer or keys";
             return panel;
         };
         commands.add ({ "ui.tile",
-                        "Open a panel beside the active one: pattern, pianoroll, mixer or keys",
-                        { { "panel", core::CommandParam::Type::text, 0, 0, "pattern, pianoroll, mixer or keys" } },
+                        "Open a panel beside the active one: pattern, pianoroll, effects, mixer or keys",
+                        { { "panel", core::CommandParam::Type::text, 0, 0, "pattern, pianoroll, effects, mixer or keys" } },
                         [this, panelArg] (const core::CommandArgs& args)
                         {
                             juce::String error;
@@ -349,7 +349,7 @@ private:
         commands.add ({ "keys.bind",
                         "Make a key run a command line in a context: keys.bind acid ctrl+1 cutoff 0.2",
                         { { "context", core::CommandParam::Type::text, 0, 0,
-                            "global, pattern, pianoroll, mixer, acid or sampler" },
+                            "global, pattern, pianoroll, mixer, effects, acid or sampler" },
                           { "key", core::CommandParam::Type::text, 0, 0, "e.g. ctrl+1, F5, space (no spaces inside)" },
                           { "command", core::CommandParam::Type::text, 0, 0, "the command line it runs" } },
                         [this] (const core::CommandArgs& args)
@@ -427,7 +427,8 @@ private:
                             return core::CommandOutcome::ok();
                         } });
         commands.add ({ "ui.view",
-                        "Show a panel where the active one is: pattern (F6), pianoroll (F7), mixer (F9) or keys (F10)",
+                        "Show a panel where the active one is: pattern (F6), pianoroll (F7), effects (F8), mixer (F9) "
+                        "or keys (F10)",
                         { { "view", core::CommandParam::Type::text, 0, 0, "pattern, pianoroll or mixer" } },
                         [this] (const core::CommandArgs& args)
                         {

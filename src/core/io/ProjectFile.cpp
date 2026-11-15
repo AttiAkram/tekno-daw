@@ -52,7 +52,8 @@ namespace
         return "{ \"cutoff\": " + number (a.cutoff) + ", \"resonance\": " + number (a.resonance) +
                ", \"envMod\": " + number (a.envMod) + ", \"decay\": " + number (a.decay) +
                ", \"accent\": " + number (a.accent) + ", \"drive\": " + number (a.drive) +
-               ", \"waveform\": " + quoted (a.square ? "square" : "saw") + " }";
+               ", \"waveform\": " + quoted (a.shape >= 0.5f ? "square" : "saw") + ", \"shape\": " + number (a.shape) +
+               ", \"glide\": " + number (a.glide) + " }";
     }
 
     juce::String samplePath (const juce::String& origin, const juce::File& projectFolder)
@@ -69,6 +70,42 @@ namespace
     {
         return "{ \"sample\": " + quoted (sample) + ", \"tune\": " + number (s.tune) +
                ", \"decay\": " + number (s.decay) + ", \"accent\": " + number (s.accent) + " }";
+    }
+
+    /** One line per effect: its slot, type, bypass, then every parameter by name (choices by name). */
+    juce::String effectLine (int slot, const EffectSettings& e)
+    {
+        const auto& info = effectInfo (e.type);
+        juce::String line;
+        line << "{ \"slot\": " << (slot + 1) << ", \"type\": " << quoted (info.name)
+             << ", \"bypass\": " << boolean (e.bypass);
+        for (size_t p = 0; p < info.params.size(); ++p)
+        {
+            const auto& param = info.params[p];
+            line << ", " << quoted (param.name) << ": "
+                 << (param.isChoice()
+                         ? quoted (param.choices[static_cast<size_t> (std::clamp (
+                               static_cast<int> (e.values[p]), 0, static_cast<int> (param.choices.size()) - 1))])
+                         : number (e.values[p]));
+        }
+        return line + " }";
+    }
+
+    /** `"effects": [ ... ]` at this indent, or nothing when the chain is empty. */
+    void addEffects (juce::StringArray& lines, const EffectChainSettings& chain, const juce::String& indent,
+                     bool commaAfter)
+    {
+        std::vector<int> used;
+        for (int i = 0; i < effectSlots; ++i)
+            if (chain[static_cast<size_t> (i)].type != EffectType::none)
+                used.push_back (i);
+        if (used.empty())
+            return;
+        lines.add (indent + "\"effects\": [");
+        for (size_t u = 0; u < used.size(); ++u)
+            lines.add (indent + "  " + effectLine (used[u], chain[static_cast<size_t> (used[u])]) +
+                       (u + 1 < used.size() ? "," : ""));
+        lines.add (indent + (commaAfter ? "]," : "]"));
     }
 
     juce::String mixerLine (const MixerSettings& m)
@@ -92,6 +129,8 @@ namespace
         double bpm = TransportState::defaultBpm;
         float swing = TransportState::minSwing;
         float masterDb = 0.0f;
+        EffectChainSettings masterEffects {};
+        juce::StringArray warnings; // things skipped while reading (effects of a newer version)
         Key key;
         int selected = 0;
         int selectedChannel = 0;
@@ -175,7 +214,10 @@ namespace
             const auto waveform = text (obj, "waveform", path, "saw");
             if (waveform != "saw" && waveform != "square")
                 fail (path + ".waveform", "'" + waveform + "' must be \"saw\" or \"square\"");
-            a.square = waveform == "square";
+            a.shape = waveform == "square" ? 1.0f : 0.0f; // files before the morph
+            a.shape = unit (obj, "shape", path, a.shape);
+            a.glide = static_cast<float> (
+                number (obj, "glide", path, a.glide, AcidSettings::minGlide, AcidSettings::maxGlide));
             return a;
         }
 
@@ -243,6 +285,58 @@ namespace
         return out;
     }
 
+    /** An "effects" list. Unknown types (a newer version's) are skipped with a warning; bad values are
+        errors, as everywhere else in the file. */
+    EffectChainSettings readEffects (Reader& r, const juce::var& list, const juce::String& path,
+                                     const juce::String& owner, juce::StringArray& warnings)
+    {
+        EffectChainSettings chain {};
+        if (list.isVoid())
+            return chain;
+        if (! list.isArray() || list.size() > effectSlots)
+        {
+            r.fail (path, "must be a list of at most " + juce::String (effectSlots) + " effects");
+            return chain;
+        }
+        for (int i = 0; i < list.size() && r.ok(); ++i)
+        {
+            const auto item = list[i];
+            const auto itemPath = path + "[" + juce::String (i) + "]";
+            const auto slot = static_cast<int> (r.number (item, "slot", itemPath, i + 1, 1, effectSlots)) - 1;
+            const auto typeName = r.text (item, "type", itemPath, {});
+            const auto type = effectFromName (typeName);
+            if (! type)
+            {
+                warnings.add (owner + ": skipped the effect '" + typeName + "' (made by a newer version?)");
+                continue;
+            }
+            auto settings = EffectSettings::defaults (*type);
+            settings.bypass = r.boolean (item, "bypass", itemPath, false);
+            const auto& info = effectInfo (*type);
+            for (size_t p = 0; p < info.params.size(); ++p)
+            {
+                const auto& param = info.params[p];
+                const auto v = item[param.name];
+                if (param.isChoice() && v.isString())
+                {
+                    auto found = -1;
+                    for (size_t c = 0; c < param.choices.size(); ++c)
+                        if (v.toString() == param.choices[c])
+                            found = static_cast<int> (c);
+                    if (found < 0)
+                        r.fail (itemPath + "." + param.name, "'" + v.toString() + "' is not a choice");
+                    else
+                        settings.values[p] = static_cast<float> (found);
+                }
+                else
+                    settings.values[p] = static_cast<float> (
+                        r.number (item, param.name, itemPath, param.defaultValue, param.min, param.max));
+            }
+            chain[static_cast<size_t> (slot)] = settings;
+        }
+        return chain;
+    }
+
     /** The pattern header (number, name, length); returns the index, or -1 on error. */
     int readPatternHeader (Reader& r, const juce::var& p, const juce::String& path, ProjectData& data)
     {
@@ -297,6 +391,7 @@ namespace
     {
         data.masterDb = static_cast<float> (
             r.number (root["master"], "volume", "master", 0.0, MixerSettings::minVolumeDb, MixerSettings::maxVolumeDb));
+        data.masterEffects = readEffects (r, root["master"]["effects"], "master.effects", "master", data.warnings);
 
         const auto channels = root["channels"];
         if (! channels.isArray() || channels.size() == 0 || channels.size() > Session::maxChannels)
@@ -337,6 +432,8 @@ namespace
             out.mixer.pan = static_cast<float> (r.number (m, "pan", mixerPath, 0.0, -1.0, 1.0));
             out.mixer.mute = r.boolean (m, "mute", mixerPath, false);
             out.mixer.solo = r.boolean (m, "solo", mixerPath, false);
+            out.effects = readEffects (r, c["effects"], path + ".effects",
+                                       "channel " + juce::String (i + 1) + " (" + out.name + ")", data.warnings);
             data.channels.push_back (out);
         }
 
@@ -455,8 +552,9 @@ namespace
         session.transport.bpm = data.bpm;
         session.transport.swing = data.swing;
         session.master.volumeDb = data.masterDb;
+        session.master.effects.store (data.masterEffects);
 
-        juce::StringArray warnings;
+        auto warnings = data.warnings;
         for (size_t c = 0; c < data.channels.size(); ++c)
         {
             juce::String warning;
@@ -491,7 +589,15 @@ juce::String toText (const Session& session, const juce::File& projectFolder)
     lines.add ("  \"ticksPerStep\": " + juce::String (Note::ticksPerStep) + ",");
     lines.add ("  \"tempo\": { \"bpm\": " + number (session.transport.bpm.load()) +
                ", \"swing\": " + number (session.transport.swing.load()) + " },");
-    lines.add ("  \"master\": { \"volume\": " + number (session.master.volumeDb.load()) + " },");
+    if (session.master.effects.empty())
+        lines.add ("  \"master\": { \"volume\": " + number (session.master.volumeDb.load()) + " },");
+    else
+    {
+        lines.add ("  \"master\": {");
+        lines.add ("    \"volume\": " + number (session.master.volumeDb.load()) + ",");
+        addEffects (lines, session.master.effects.load(), "    ", false);
+        lines.add ("  },");
+    }
     if (session.project.key.active())
         lines.add ("  \"key\": { \"root\": " + quoted (rootName (session.project.key.root, true)) +
                    ", \"scale\": " + quoted (scaleName (session.project.key.scale)) + " },");
@@ -515,7 +621,10 @@ juce::String toText (const Session& session, const juce::File& projectFolder)
                 "      \"sampler\": " +
                 samplerLine (channel.sampler.load(), samplePath (session.project.channelSamples[slot], projectFolder)) +
                 ",");
-        lines.add ("      \"mixer\": " + mixerLine (channel.mixer.load()));
+        const auto effects = channel.effects.load();
+        const auto hasEffects = ! channel.effects.empty();
+        lines.add ("      \"mixer\": " + mixerLine (channel.mixer.load()) + (hasEffects ? "," : ""));
+        addEffects (lines, effects, "      ", false);
         lines.add (c + 1 < channels ? "    }," : "    }");
     }
     lines.add ("  ],");

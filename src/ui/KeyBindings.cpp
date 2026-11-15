@@ -69,6 +69,7 @@ core::Keymap defaults()
     add ("global", K ('`'), "ui.terminal", "terminal");
     add ("global", K (K::F6Key), "ui.view pattern", "step sequencer");
     add ("global", K (K::F7Key), "ui.view pianoroll", "piano roll");
+    add ("global", K (K::F8Key), "ui.view effects", "effects");
     add ("global", K (K::F9Key), "ui.view mixer", "mixer");
     add ("global", K (K::F10Key), "ui.view keys", "edit the keys");
     add ("global", K (K::pageUpKey), "pattern.previous", "previous pattern");
@@ -78,6 +79,7 @@ core::Keymap defaults()
     const auto alt = M::altModifier;
     add ("global", K (K::F6Key, alt, 0), "ui.tile pattern", "steps beside");
     add ("global", K (K::F7Key, alt, 0), "ui.tile pianoroll", "piano roll beside");
+    add ("global", K (K::F8Key, alt, 0), "ui.tile effects", "effects beside");
     add ("global", K (K::F9Key, alt, 0), "ui.tile mixer", "mixer beside");
     add ("global", K (K::F10Key, alt, 0), "ui.tile keys", "keys beside");
     add ("global", K ('q', alt, 0), "ui.tile.close", "close panel");

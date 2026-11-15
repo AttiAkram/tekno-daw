@@ -44,7 +44,7 @@ namespace
     /** One strip's areas, in the coordinates of whatever paints it. */
     struct StripLayout
     {
-        juce::Rectangle<float> name, mute, solo, pan, panText, fader, meter, clip, readout;
+        juce::Rectangle<float> name, mute, solo, pan, panText, effects, fader, meter, clip, readout;
 
         static StripLayout make (juce::Rectangle<float> strip)
         {
@@ -58,6 +58,7 @@ namespace
             a.removeFromTop (space::unit * 3.0f);
             l.pan = a.removeFromTop (panSize).withSizeKeepingCentre (panSize, panSize);
             l.panText = a.removeFromTop (18.0f);
+            l.effects = a.removeFromTop (18.0f); // the inserts' short names
             a.removeFromTop (space::unit * 3.0f);
             l.readout = a.removeFromBottom (readoutHeight);
             a.removeFromBottom (space::unit);
@@ -77,6 +78,23 @@ namespace
     juce::Rectangle<float> travel (juce::Rectangle<float> fader)
     {
         return fader.reduced (0.0f, 6.0f);
+    }
+
+    /** "dist delay": the effects on a strip, short, in order; bypassed ones in brackets. */
+    juce::String effectNames (const core::EffectChain& chain)
+    {
+        juce::StringArray names;
+        for (const auto& slot : chain.slots)
+        {
+            const auto type = slot.type.load();
+            if (type == core::EffectType::none)
+                continue;
+            const auto name = type == core::EffectType::distortion ? juce::String ("dist")
+                              : type == core::EffectType::reverb   ? juce::String ("verb")
+                                                                   : juce::String ("delay");
+            names.add (slot.bypass.load() ? "(" + name + ")" : name);
+        }
+        return names.joinIntoString (" ");
     }
 
     void paintMeter (juce::Graphics& g, const TeknoLookAndFeel& lnf, juce::Rectangle<float> area,
@@ -248,6 +266,7 @@ public:
             toggle (l.solo, mixer.solo.load(), "S");
 
             drawText (g, lnf, formatPan (mixer.pan.load()), type::meta, muted, l.panText);
+            drawText (g, lnf, effectNames (session.channel (c).effects), type::meta, ink, l.effects);
             paintMeter (g, lnf, l.meter, owner.meters.channel (c), l.clip);
             drawText (g, lnf, formatDb (mixer.volumeDb.load()), type::meta, ink, l.readout);
         }
@@ -362,6 +381,7 @@ void MixerView::paint (juce::Graphics& g)
     paintMeter (g, lnf, masterMeterArea.withTrimmedLeft (half + space::unit), meters.masterRight(),
                 clipHalf.translated (half + space::unit, 0.0f));
     drawText (g, lnf, formatDb (session.master.volumeDb.load()), type::meta, lnf.colour (&P::ink), masterReadoutArea);
+    drawText (g, lnf, effectNames (session.master.effects), type::meta, lnf.colour (&P::ink), l.effects);
 }
 
 void MixerView::mouseDown (const juce::MouseEvent& e)

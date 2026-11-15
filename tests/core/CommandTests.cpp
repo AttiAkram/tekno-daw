@@ -97,7 +97,7 @@ TEST_CASE ("transport and synth commands change the shared state", "[core][comma
     f.registry.execute ("synth.cutoff", { { "value", 0.9 } });
     CHECK (f.acid().cutoff.load() == 0.9f);
     f.registry.execute ("synth.waveform", { { "square", true } });
-    CHECK (f.acid().square.load());
+    CHECK (f.acid().shape.load() == 1.0f);
     CHECK (f.registry.canUndo()); // saved in the project, so undoable
 }
 

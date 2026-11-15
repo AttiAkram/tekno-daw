@@ -28,7 +28,7 @@ struct TransportState
 {
     static constexpr double minBpm = 40.0;
     static constexpr double maxBpm = 300.0;
-    static constexpr double defaultBpm = 130.0;
+    static constexpr double defaultBpm = 170.0; // the middle of free tekno and mental
 
     /** Swing in MPC notation: the share of a pair of 16ths taken by the first one.
         50 = straight, 66.7 = triplet shuffle, 75 = dotted. */
@@ -47,6 +47,7 @@ struct MasterState
 {
     std::atomic<float> volumeDb { 0.0f };
     std::atomic<float> peakLeft { 0.0f }, peakRight { 0.0f };
+    EffectChain effects; // inserts on the whole mix, before the master fader
 };
 
 /** A whole channel as plain values: what a file holds, what undo keeps of a removed channel. */
@@ -58,6 +59,7 @@ struct ChannelData
     AcidSettings acid;
     SamplerSettings sampler;
     MixerSettings mixer;
+    EffectChainSettings effects {};
     std::array<std::vector<Note>, 16> lanes {}; // the channel's notes in each pattern
 };
 
