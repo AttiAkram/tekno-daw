@@ -39,7 +39,7 @@ public:
     /** The sample for an origin ("builtin:kick", or an absolute path), loading the file if needed. */
     Result get (const juce::String& origin);
 
-    /** Names of the built-in sounds: "kick", "hat", "openhat", "clap". */
+    /** Names of the built-in sounds: the kick, hats and clap, then the tribal ones (tom, conga...). */
     static juce::StringArray builtinNames();
 
     /** Frees samples that no channel uses and that the audio thread can no longer be reading.

@@ -26,7 +26,8 @@ namespace
 
     constexpr int stepsPerBeat = 4;
     constexpr float maxStepSize = 56.0f;
-    constexpr float minStepSize = 30.0f; // below this the rack scrolls instead of shrinking
+    constexpr float minStepSize = 22.0f; // below this the rack scrolls instead of shrinking
+    constexpr float minWideStep = 14.0f; // smallest step when more than one bar is shown side by side
     constexpr float pillWidth = 100.0f;
     constexpr float toggleSize = 20.0f; // the mute and solo boxes
     constexpr float rackLabelWidth = pillWidth + (space::unit + toggleSize) * 2.0f;
@@ -180,6 +181,42 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
             Knob::Group::sampler,
             [] (const core::Channel& c) { return c.sampler.accent.load(); },
             {} },
+          { "drive",
+            "sub.drive",
+            "value",
+            0,
+            1,
+            core::SubSettings {}.drive,
+            Knob::Group::sub,
+            [] (const core::Channel& c) { return c.sub.drive.load(); },
+            {} },
+          { "punch",
+            "sub.punch",
+            "value",
+            0,
+            1,
+            core::SubSettings {}.punch,
+            Knob::Group::sub,
+            [] (const core::Channel& c) { return c.sub.punch.load(); },
+            {} },
+          { "decay",
+            "sub.decay",
+            "value",
+            0,
+            1,
+            core::SubSettings {}.decay,
+            Knob::Group::sub,
+            [] (const core::Channel& c) { return c.sub.decay.load(); },
+            {} },
+          { "glide",
+            "sub.glide",
+            "seconds",
+            core::AcidSettings::minGlide,
+            core::AcidSettings::maxGlide,
+            core::SubSettings {}.glide,
+            Knob::Group::sub,
+            [] (const core::Channel& c) { return c.sub.glide.load(); },
+            {} },
           { "volume",
             "mixer.volume",
             "db",
@@ -289,6 +326,11 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
         addAndMakeVisible (b);
     }
 
+    addChannelButton.setMouseClickGrabsKeyboardFocus (false);
+    addChannelButton.setTooltip ("Add a channel: a 303, a sub bass, or a drum sound");
+    addChannelButton.onClick = [this] { showAddChannelMenu(); };
+    addChildComponent (addChannelButton);
+
     for (auto& knob : knobs)
     {
         auto& s = knob.slider;
@@ -299,6 +341,8 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
             s.setSkewFactorFromMidPoint (0.06); // glide: the short, 303-like times get most of the travel
         s.setMouseDragSensitivity (200);
         s.setDoubleClickReturnValue (true, knob.defaultValue);
+        if (const auto* definition = commands.find (knob.command)) // the command says what the knob does
+            s.setTooltip (definition->description + "  (double-click: back to default)");
         s.setValue (knob.read (session.selectedChannelRef()), juce::dontSendNotification);
         s.setMouseClickGrabsKeyboardFocus (false);
         s.onValueChange = [this, &knob]
@@ -329,6 +373,30 @@ PatternView::PatternView (TeknoLookAndFeel& teknoLookAndFeel, Session& sessionTo
     startTimerHz (refreshHz);
 }
 
+void PatternView::showAddChannelMenu()
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("synths");
+    menu.addItem ("303 acid", [this] { run ("channel.add", { { "instrument", "acid" } }); });
+    menu.addItem ("sub bass", [this] { run ("channel.add", { { "instrument", "sub" } }); });
+    menu.addSectionHeader ("drums");
+    for (const auto& name : core::SampleLibrary::builtinNames())
+        menu.addItem (name,
+                      [this, name]
+                      {
+                          run ("channel.add", { { "instrument", "sampler" },
+                                                { "name", name },
+                                                { "sample", core::SampleLibrary::builtinPrefix + name } });
+                      });
+    menu.addItem ("a sound from a file...",
+                  [this]
+                  {
+                      run ("channel.add", { { "instrument", "sampler" }, { "name", "sample" } });
+                      actions.chooseSample (session.selectedChannel.load());
+                  });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (addChannelButton));
+}
+
 void PatternView::run (const juce::String& command, const core::CommandArgs& args)
 {
     const auto outcome = commands.execute (command, args);
@@ -340,7 +408,7 @@ bool PatternView::knobVisible (const Knob& knob) const
 {
     if (knob.group == Knob::Group::mixer)
         return shown.channels > 0;
-    return (knob.group == Knob::Group::sampler) == shown.isSampler (shown.selectedChannel);
+    return shown.channels > 0 && knob.group == shown.groupOf (shown.selectedChannel);
 }
 
 // --- state --------------------------------------------------------------------------------------
@@ -367,6 +435,8 @@ PatternView::Snapshot PatternView::takeSnapshot() const
         const auto& channel = session.channel (c);
         if (channel.kind.load() == InstrumentKind::sampler)
             s.samplers |= 1u << c;
+        if (channel.kind.load() == InstrumentKind::sub)
+            s.subs |= 1u << c;
         if (channel.mixer.mute.load())
             s.muted |= 1u << c;
         if (channel.mixer.solo.load())
@@ -437,13 +507,14 @@ void PatternView::timerCallback()
     if (now != shown)
     {
         const auto selectionMoved = now.selectedChannel != shown.selectedChannel;
-        const auto relayoutRack = now.channels != laidOutChannels || now.samplers != laidOutSamplers;
-        const auto relayoutKnobs = now.isSampler (now.selectedChannel) != shown.isSampler (shown.selectedChannel) ||
+        const auto relayoutRack =
+            now.channels != laidOutChannels || now.samplers != laidOutSamplers || now.length != shown.length;
+        const auto relayoutKnobs = now.groupOf (now.selectedChannel) != shown.groupOf (shown.selectedChannel) ||
                                    now.channels != shown.channels;
         shown = now;
-        page = std::clamp (page, 0, (shown.length - 1) / stepsPerPage);
         if (relayoutRack)
-            layoutRack();
+            layoutRack(); // also decides how many steps a page holds
+        page = std::clamp (page, 0, (shown.length - 1) / pageSteps);
         if (relayoutKnobs)
             layoutKnobs();
         if (selectionMoved || relayoutRack) // from anywhere: a click, the terminal, undo
@@ -607,7 +678,7 @@ void PatternView::showChannelMenu (int channel)
 {
     const auto latin = core::getNoteNaming() == core::NoteNaming::latin;
     const auto target = channel + 1;
-    const auto bars = shown.length / stepsPerPage;
+    const auto bars = shown.length / stepsPerBar;
     juce::PopupMenu menu;
     menu.addItem (latin ? "Ripeti la prima battuta fino alla fine" : "Repeat the first bar to the end", bars > 1, false,
                   [this, target] { run ("lane.repeat", { { "bars", 1 }, { "channel", target } }); });
@@ -767,12 +838,14 @@ void PatternView::layoutKnobs()
                                        knobCellHeight);
     };
 
-    int acidIndex = 0, samplerIndex = 0, mixerIndex = 0;
+    int acidIndex = 0, samplerIndex = 0, subIndex = 0, mixerIndex = 0;
     for (auto& knob : knobs)
     {
         juce::Rectangle<float> area;
         if (knob.group == Knob::Group::acid)
             area = cell (acidIndex / columnsInGrid, acidIndex % columnsInGrid), ++acidIndex;
+        else if (knob.group == Knob::Group::sub)
+            area = cell (subIndex / columnsInGrid, subIndex % columnsInGrid), ++subIndex;
         else if (knob.group == Knob::Group::sampler)
             area = cell (0, samplerIndex++);
         else
@@ -823,10 +896,26 @@ void PatternView::layoutRack()
     g.removeFromTop (space::unit);
     rackArea = g;
 
-    const auto stepGap = space::unit;
+    // As many whole bars side by side as fit across (all four on a wide screen); the rest are pages.
+    const auto stepGap = space::unit, barGap = space::gap * 2.0f;
     const auto gridWidth = g.getWidth() - rackLabelWidth - space::gutter;
-    const auto fixedGaps = space::gap * 3.0f + stepGap * 3.0f * 4.0f;
-    const auto byWidth = std::floor ((gridWidth - fixedGaps) / static_cast<float> (stepsPerPage));
+    auto stepWidthFor = [&] (int bars)
+    {
+        const auto gaps =
+            static_cast<float> (bars) * (space::gap * 3.0f + stepGap * 12.0f) + static_cast<float> (bars - 1) * barGap;
+        return std::floor ((gridWidth - gaps) / static_cast<float> (bars * stepsPerBar));
+    };
+    const auto patternBars = std::max (1, (shown.length + stepsPerBar - 1) / stepsPerBar);
+    auto pageBars = 1;
+    for (const auto candidate : { patternBars, 2 })
+        if (candidate > pageBars && candidate <= patternBars && stepWidthFor (candidate) >= minWideStep)
+        {
+            pageBars = candidate;
+            break;
+        }
+    pageSteps = pageBars * stepsPerBar;
+    page = std::clamp (page, 0, std::max (0, (shown.length - 1) / pageSteps));
+    const auto byWidth = stepWidthFor (pageBars);
 
     const auto rowCount = std::max (1, shown.channels);
     auto extras = 0.0f;
@@ -836,18 +925,22 @@ void PatternView::layoutRack()
         std::floor ((g.getHeight() - extras - space::unit * static_cast<float> (rowCount - 1)) / rowCount);
     // The height decides down to minStepSize (then the rack scrolls); a narrow panel can squeeze the
     // steps further, so all 16 always fit across.
-    stepSize = juce::jlimit (16.0f, maxStepSize, juce::jmin (byWidth, juce::jmax (byHeight, minStepSize)));
+    stepSize = juce::jlimit (pageBars > 1 ? minWideStep : 16.0f, maxStepSize,
+                             juce::jmin (byWidth, juce::jmax (byHeight, minStepSize)));
 
     const auto left = g.getX() + rackLabelWidth + space::gutter;
     auto sx = left;
-    for (int col = 0; col < stepsPerPage; ++col)
+    for (int col = 0; col < pageSteps; ++col)
     {
         columns[static_cast<size_t> (col)] = { sx, 0.0f, stepSize, 0.0f };
-        sx += stepSize + ((col + 1) % stepsPerBeat == 0 ? space::gap : stepGap);
+        sx += stepSize + ((col + 1) % stepsPerBar == 0 ? barGap : (col + 1) % stepsPerBeat == 0 ? space::gap : stepGap);
     }
 
-    // Rows that don't fit scroll: rackScroll moves them up, painting clips them to rackArea.
-    rackContentHeight = 0.0f;
+    // Rows that don't fit scroll: rackScroll moves them up, painting clips them to rackArea. The
+    // "+ channel" button comes after the last row and scrolls with them.
+    const auto canAdd = shown.channels < maxChannels;
+    const auto addRowHeight = shape::pillHeightCompact + space::unit * 2.0f;
+    rackContentHeight = canAdd ? addRowHeight : 0.0f;
     for (int c = 0; c < shown.channels; ++c)
         rackContentHeight += rowTop + stepSize + rowBottom (shown.isSampler (c)) + (c > 0 ? space::unit : 0.0f);
     rackScroll = std::clamp (rackScroll, 0.0f, std::max (0.0f, rackContentHeight - g.getHeight()));
@@ -863,6 +956,14 @@ void PatternView::layoutRack()
         row.solo = row.mute.translated (toggleSize + space::unit, 0.0f);
         y = row.stepY + stepSize + rowBottom (c < shown.channels && shown.isSampler (c)) + space::unit;
     }
+
+    const auto afterLast = shown.channels > 0 ? rows[static_cast<size_t> (shown.channels - 1)].stepY + stepSize +
+                                                    rowBottom (shown.isSampler (shown.channels - 1)) + space::unit
+                                              : g.getY() - rackScroll;
+    const auto addBounds =
+        juce::Rectangle<float> (g.getX(), afterLast + space::unit, pillWidth, shape::pillHeightCompact);
+    addChannelButton.setBounds (addBounds.toNearestInt());
+    addChannelButton.setVisible (canAdd && tiles.isOpen (View::pattern) && rackArea.contains (addBounds));
 }
 
 // --- painting -----------------------------------------------------------------------------------
@@ -941,7 +1042,11 @@ void PatternView::paintLeftColumn (juce::Graphics& g) const
         const auto sampler = shown.isSampler (shown.selectedChannel);
         auto title = synthArea.withHeight (28.0f);
         drawText (g, shown.channelNames[static_cast<size_t> (shown.selectedChannel)], type::sectionTitle, ink, title);
-        drawText (g, sampler ? "sampler" : "303 acid", type::meta, muted, title, juce::Justification::centredRight);
+        drawText (g,
+                  sampler                               ? "sampler"
+                  : shown.isSub (shown.selectedChannel) ? "sub bass"
+                                                        : "303 acid",
+                  type::meta, muted, title, juce::Justification::centredRight);
         if (sampler)
             drawText (g, shown.sampleName, type::meta, ink, sampleNameArea);
     }
@@ -1137,20 +1242,28 @@ void PatternView::paintContent (juce::Graphics& g) const
     }
 
     // Above the rack: which bar is shown (when there is more than one), beat numbers, the playhead.
-    const auto pages = (shown.length + stepsPerPage - 1) / stepsPerPage;
+    const auto pages = (shown.length + pageSteps - 1) / pageSteps;
     if (pages > 1)
-        drawText (g, "bar " + juce::String (page + 1) + " of " + juce::String (pages), type::meta, ink, pageLabelArea);
-    for (int beat = 0; beat < stepsPerPage / stepsPerBeat; ++beat)
     {
-        if (page * stepsPerPage + beat * stepsPerBeat >= shown.length)
+        const auto bars = (shown.length + stepsPerBar - 1) / stepsPerBar, first = page * pageSteps / stepsPerBar + 1;
+        const auto last = std::min (bars, first + pageSteps / stepsPerBar - 1);
+        drawText (g,
+                  (first == last ? "bar " + juce::String (first)
+                                 : "bars " + juce::String (first) + "-" + juce::String (last)) +
+                      " of " + juce::String (bars),
+                  type::meta, ink, pageLabelArea);
+    }
+    for (int beat = 0; beat < pageSteps / stepsPerBeat; ++beat)
+    {
+        if (page * pageSteps + beat * stepsPerBeat >= shown.length)
             break;
         const auto first = columns[static_cast<size_t> (beat * stepsPerBeat)];
-        drawText (g, juce::String (page * stepsPerPage / stepsPerBeat + beat + 1), type::meta, muted,
+        drawText (g, juce::String (page * pageSteps / stepsPerBeat + beat + 1), type::meta, muted,
                   beatLabelArea.withX (first.getX()).withWidth (first.getWidth() * 2.0f));
     }
-    if (shown.currentStep >= 0 && shown.currentStep / stepsPerPage == page)
+    if (shown.currentStep >= 0 && shown.currentStep / pageSteps == page)
     {
-        const auto column = columns[static_cast<size_t> (shown.currentStep % stepsPerPage)];
+        const auto column = columns[static_cast<size_t> (shown.currentStep % pageSteps)];
         const auto d = shape::navDotSize;
         g.setColour (ink);
         g.fillEllipse (column.getCentreX() - d * 0.5f, beatLabelArea.getBottom() - d, d, d);
@@ -1220,10 +1333,10 @@ void PatternView::paintRow (juce::Graphics& g, int channel) const
     {
         // Notes off the grid: the steps can't show them, so the row shows the notes in miniature,
         // pitch up and time across, over the bar on screen. A click opens the piano roll.
-        const auto from = page * stepsPerPage * core::Note::ticksPerStep;
-        const auto to = from + stepsPerPage * core::Note::ticksPerStep;
+        const auto from = page * pageSteps * core::Note::ticksPerStep;
+        const auto to = from + pageSteps * core::Note::ticksPerStep;
         const auto left = columns[0].getX();
-        const auto right = columns[static_cast<size_t> (stepsPerPage - 1)].getRight();
+        const auto right = columns[static_cast<size_t> (pageSteps - 1)].getRight();
         const juce::Rectangle<float> box (left, row.stepY, right - left, stepSize);
         g.setColour (line);
         g.drawRoundedRectangle (box.reduced (shape::lineWidth * 0.5f), shape::stepRadius, shape::lineWidth);
@@ -1250,14 +1363,14 @@ void PatternView::paintRow (juce::Graphics& g, int channel) const
         return;
     }
 
-    for (int col = 0; col < stepsPerPage; ++col)
-        if (page * stepsPerPage + col < shown.length)
+    for (int col = 0; col < pageSteps; ++col)
+        if (page * pageSteps + col < shown.length)
             paintStep (g, channel, col);
 }
 
 void PatternView::paintStep (juce::Graphics& g, int channel, int column) const
 {
-    const auto index = page * stepsPerPage + column;
+    const auto index = page * pageSteps + column;
     const auto& lane = shown.steps[static_cast<size_t> (channel)];
     const auto step = core::Step::unpack (lane[static_cast<size_t> (index)]);
     const auto& row = rows[static_cast<size_t> (channel)];
@@ -1312,7 +1425,7 @@ void PatternView::paintStep (juce::Graphics& g, int channel, int column) const
     const auto slideY = area.getBottom() + space::unit * 2.0f;
     const auto nextIndex = index + 1 < shown.length ? index + 1 : -1;
     const auto next = nextIndex >= 0 ? core::Step::unpack (lane[static_cast<size_t> (nextIndex)]) : core::Step {};
-    if (step.slide && next.on && column + 1 < stepsPerPage) // a line into the next step
+    if (step.slide && next.on && column + 1 < pageSteps) // a line into the next step
     {
         const auto nextColumn = columns[static_cast<size_t> (column + 1)];
         g.drawLine (area.getCentreX(), slideY, nextColumn.getCentreX(), slideY, shape::iconStroke);
@@ -1340,9 +1453,9 @@ PatternView::RackHit PatternView::rackAt (juce::Point<float> position) const
             return { W::mute, c, -1 };
         if (row.solo.contains (position))
             return { W::solo, c, -1 };
-        for (int col = 0; col < stepsPerPage; ++col)
+        for (int col = 0; col < pageSteps; ++col)
         {
-            const auto index = page * stepsPerPage + col;
+            const auto index = page * pageSteps + col;
             const juce::Rectangle<float> area (columns[static_cast<size_t> (col)].getX(), row.stepY, stepSize,
                                                stepSize);
             if (index < shown.length && area.contains (position))
@@ -1401,7 +1514,7 @@ void PatternView::ensureChannelVisible (int channel)
 
 void PatternView::showPage (int newPage)
 {
-    const auto pages = (shown.length + stepsPerPage - 1) / stepsPerPage;
+    const auto pages = (shown.length + pageSteps - 1) / pageSteps;
     newPage = juce::jlimit (0, std::max (0, pages - 1), newPage);
     if (newPage != page)
     {
@@ -1484,7 +1597,7 @@ void PatternView::mouseDown (const juce::MouseEvent& e)
     }
     if (tiles.isOpen (View::pattern) && pageLabelArea.contains (e.position))
     {
-        const auto pages = (shown.length + stepsPerPage - 1) / stepsPerPage;
+        const auto pages = (shown.length + pageSteps - 1) / pageSteps;
         showPage ((page + 1) % std::max (1, pages));
         return;
     }
@@ -1679,7 +1792,9 @@ juce::StringArray PatternView::activeKeyContexts() const
 {
     juce::StringArray contexts;
     if (shown.channels > 0)
-        contexts.add (shown.isSampler (shown.selectedChannel) ? "sampler" : "acid");
+        contexts.add (shown.isSampler (shown.selectedChannel) ? "sampler"
+                      : shown.isSub (shown.selectedChannel)   ? "sub"
+                                                              : "acid");
     const auto active = tiles.active();
     contexts.add (active == View::pianoRoll  ? "pianoroll"
                   : active == View::mixer    ? "mixer"

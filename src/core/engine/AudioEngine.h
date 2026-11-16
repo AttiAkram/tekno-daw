@@ -17,6 +17,8 @@
 #include "core/dsp/PingPongDelay.h"
 #include "core/dsp/PlateReverb.h"
 #include "core/dsp/Sampler.h"
+#include "core/dsp/Shaper.h"
+#include "core/dsp/SubVoice.h"
 #include "core/engine/LiveInput.h"
 #include "core/model/Session.h"
 
@@ -96,7 +98,33 @@ private:
         InstrumentKind kind = InstrumentKind::acid;
         std::uint32_t generation = 0;
         dsp::AcidVoice acid;
+        dsp::SubVoice sub;
         dsp::Sampler sampler;
+
+        // The channel's monophonic synth, acid or sub: both follow the same gates, slides and live
+        // legato. On a sampler channel these reach the idle acid voice, harmlessly, as they always did.
+        void noteOn (int pitch, bool accent) noexcept
+        {
+            if (kind == InstrumentKind::sub)
+                sub.noteOn (pitch, accent);
+            else
+                acid.noteOn (pitch, accent);
+        }
+        void glideTo (int pitch) noexcept
+        {
+            if (kind == InstrumentKind::sub)
+                sub.glideTo (pitch);
+            else
+                acid.glideTo (pitch);
+        }
+        void gateOff() noexcept
+        {
+            if (kind == InstrumentKind::sub)
+                sub.gateOff();
+            else
+                acid.gateOff();
+        }
+        bool isGateOn() const noexcept { return kind == InstrumentKind::sub ? sub.isGateOn() : acid.isGateOn(); }
 
         std::array<Pending, maxPerStep> pending {};
         int pendingCount = 0, nextPending = 0;
@@ -172,6 +200,7 @@ private:
     std::vector<float> stripScratch;
     std::array<std::array<SlotState, effectSlots>, strips> slotStates {};
     std::array<dsp::Distortion, strips * effectSlots> distortions; // one per slot: they are small
+    std::array<dsp::Shaper, strips * effectSlots> shapers;
     std::vector<dsp::PingPongDelay> delays;
     std::vector<dsp::PlateReverb> reverbs;
     std::array<int, maxDelays> delayOwner {};

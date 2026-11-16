@@ -31,6 +31,11 @@ public:
         mix,
     };
 
+    /** About how long the tail takes to fall by 60 dB at this decay setting: the graph draws it. From
+        the tank's loop (both halves) and the decay gain applied four times on the way round. */
+    static float tailSeconds (float decay) noexcept;
+    static float tankGain (float decay) noexcept { return 0.2f + 0.77f * std::clamp (decay, 0.0f, 1.0f); }
+
     void prepare (double sampleRate); // allocates: never on the audio thread
     void reset() noexcept;
     EffectMeters process (float* left, float* right, int numSamples,

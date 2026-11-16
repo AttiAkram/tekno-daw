@@ -30,6 +30,16 @@ namespace
         return c;
     }
 
+    dsp::SubVoice::Controls controlsOf (const SubSettings& s) noexcept
+    {
+        dsp::SubVoice::Controls c;
+        c.drive = s.drive;
+        c.punch = s.punch;
+        c.decay = s.decay;
+        c.glide = s.glide;
+        return c;
+    }
+
     /** Raises a meter to `value` if it is louder. The GUI resets it with exchange (0). */
     void raisePeak (std::atomic<float>& meter, float value) noexcept
     {
@@ -66,6 +76,7 @@ void AudioEngine::prepare (double newSampleRate) noexcept
     for (auto& p : players)
     {
         p.acid.prepare (sampleRate);
+        p.sub.prepare (sampleRate);
         p.sampler.prepare (sampleRate);
         p.generation = ~0u; // force a full sync on the first block
         p.resetPlayback();
@@ -79,6 +90,8 @@ void AudioEngine::prepare (double newSampleRate) noexcept
     stripScratch.assign (static_cast<size_t> (strips) * 2 * maxChunk, 0.0f);
     for (auto& d : distortions)
         d.prepare (sampleRate);
+    for (auto& s : shapers)
+        s.prepare (sampleRate);
     delays.resize (maxDelays);
     for (auto& d : delays)
         d.prepare (sampleRate);
@@ -110,6 +123,7 @@ void AudioEngine::syncPlayer (ChannelPlayer& player, const Channel& channel) noe
         player.generation = generation;
         player.kind = kind;
         player.acid.reset();
+        player.sub.reset();
         player.sampler.reset();
         player.resetPlayback();
         player.gainLeft = player.gainRight = 0.0f;
@@ -117,6 +131,8 @@ void AudioEngine::syncPlayer (ChannelPlayer& player, const Channel& channel) noe
 
     if (kind == InstrumentKind::acid)
         player.acid.setControls (controlsOf (channel.acid.load()));
+    else if (kind == InstrumentKind::sub)
+        player.sub.setControls (controlsOf (channel.sub.load()));
     else
     {
         player.sampler.setSettings (channel.sampler.load());
@@ -164,6 +180,10 @@ void AudioEngine::syncSlot (int strip, int index, const EffectSlot& slot, std::u
         state.instance = owner;
         distortions[static_cast<size_t> (owner)].reset();
         break;
+    case EffectType::shaper:
+        state.instance = owner;
+        shapers[static_cast<size_t> (owner)].reset();
+        break;
     case EffectType::delay:
         if ((state.instance = take (delayOwner)) >= 0)
             delays[static_cast<size_t> (state.instance)].reset();
@@ -196,12 +216,15 @@ void AudioEngine::runEffects (int strip, EffectChain& chain, std::uint32_t strip
         const auto instance = static_cast<size_t> (state.instance);
         if (state.type == EffectType::distortion)
             meters = distortions[instance].process (left, right, numSamples, params);
+        else if (state.type == EffectType::shaper)
+            meters = shapers[instance].process (left, right, numSamples, params);
         else if (state.type == EffectType::delay)
             meters = delays[instance].process (left, right, numSamples, params, bpm);
         else
             meters = reverbs[instance].process (left, right, numSamples, params);
         raisePeak (slot.activity, meters.peak);
         raisePeak (slot.clip, meters.clip);
+        raisePeak (slot.level, meters.level);
     }
 }
 
@@ -247,7 +270,7 @@ void AudioEngine::renderChunk (float* const* outputs, int numOutputs, int offset
     {
         for (auto& p : players)
         {
-            p.acid.gateOff(); // samplers ring out: a one-shot is not cut by stop
+            p.gateOff(); // samplers ring out: a one-shot is not cut by stop
             p.resetPlayback();
         }
         step = -1;
@@ -285,18 +308,18 @@ void AudioEngine::renderChunk (float* const* outputs, int numOutputs, int offset
                     (stepCounter > p.releaseStep ||
                      (stepCounter == p.releaseStep && samplesIntoStep >= currentStepLength * p.releaseFraction)))
                 {
-                    p.acid.gateOff();
+                    p.gateOff();
                     p.releasePending = false;
                 }
             }
             samplesIntoStep += 1.0;
         }
 
-        for (int c = 0; c < channels; ++c) // auditioned and short-gated live acid notes end by themselves
+        for (int c = 0; c < channels; ++c) // auditioned and short-gated live synth notes end by themselves
         {
             auto& p = players[static_cast<size_t> (c)];
             if (p.previewSamplesLeft > 0 && --p.previewSamplesLeft == 0)
-                p.acid.gateOff();
+                p.gateOff();
             if (p.shortGateSamples > 0 && --p.shortGateSamples == 0)
                 releaseLive (p, p.shortGatePitch);
         }
@@ -306,14 +329,14 @@ void AudioEngine::renderChunk (float* const* outputs, int numOutputs, int offset
         {
             auto& p = players[static_cast<size_t> (c)];
             float l = 0.0f, r = 0.0f;
-            if (p.kind == InstrumentKind::acid)
+            if (p.kind == InstrumentKind::sampler)
+                p.sampler.process (l, r);
+            else
             {
                 // Velocity 100 everywhere keeps this exactly 1: old projects sound bit for bit the same.
                 p.acidGain += (p.acidGainTarget - p.acidGain) * velocityGlide;
-                l = r = p.acid.process() * p.acidGain;
+                l = r = (p.kind == InstrumentKind::sub ? p.sub.process() : p.acid.process()) * p.acidGain;
             }
-            else
-                p.sampler.process (l, r);
             stripBuffer (c, 0)[i] = l;
             stripBuffer (c, 1)[i] = r;
         }
@@ -397,7 +420,7 @@ void AudioEngine::startPreview (int channels) noexcept
         player.sampler.trigger (pitch, false, Note::velocityGain (velocity));
         return;
     }
-    player.acid.noteOn (pitch, false);
+    player.noteOn (pitch, false);
     player.acidGainTarget = Note::velocityGain (velocity);
     player.previewSamplesLeft = static_cast<int> (sampleRate * 0.25); // a quarter of a second
 }
@@ -410,7 +433,7 @@ void AudioEngine::playLive (const LiveInput::Event& event, int channels, double 
         for (auto& p : players)
         {
             if (p.heldCount > 0 || p.shortGateSamples > 0)
-                p.acid.gateOff();
+                p.gateOff();
             p.heldCount = 0;
             p.shortGateSamples = 0;
         }
@@ -422,8 +445,7 @@ void AudioEngine::playLive (const LiveInput::Event& event, int channels, double 
 
     if (event.type == Type::noteOff)
     {
-        if (player.kind == InstrumentKind::acid &&
-            ! (player.shortGateSamples > 0 && event.pitch == player.shortGatePitch))
+        if (isMonoSynth (player.kind) && ! (player.shortGateSamples > 0 && event.pitch == player.shortGatePitch))
             releaseLive (player, event.pitch);
         return;
     }
@@ -438,9 +460,9 @@ void AudioEngine::playLive (const LiveInput::Event& event, int channels, double 
 
     // Acid, mono legato: a key pressed while another is held slides to it, like a 303 played by hand.
     if (player.heldCount == 0)
-        player.acid.noteOn (event.pitch, event.accent);
+        player.noteOn (event.pitch, event.accent);
     else
-        player.acid.glideTo (event.pitch);
+        player.glideTo (event.pitch);
     auto count = 0; // keep each pitch once, the newest last
     for (int i = 0; i < player.heldCount; ++i)
         if (player.held[static_cast<size_t> (i)] != event.pitch)
@@ -473,9 +495,9 @@ void AudioEngine::releaseLive (ChannelPlayer& player, std::uint8_t pitch) noexce
         return; // it wasn't held
     player.heldCount = count;
     if (count == 0)
-        player.acid.gateOff();
+        player.gateOff();
     else if (wasSounding)
-        player.acid.glideTo (player.held[static_cast<size_t> (count - 1)]); // back to the key still down
+        player.glideTo (player.held[static_cast<size_t> (count - 1)]); // back to the key still down
 }
 
 void AudioEngine::startStep (int index, double straightLength, int channels) noexcept
@@ -552,13 +574,12 @@ void AudioEngine::play (ChannelPlayer& player, int channel, const Note& note) no
     if (player.heldCount > 0)
         return; // someone is playing this channel live: live play wins over the pattern
 
-    auto& voice = player.acid;
     player.previewSamplesLeft = 0; // the sequencer takes over from an audition
-    const auto gateOpen = ! firstStep && voice.isGateOn();
+    const auto gateOpen = ! firstStep && player.isGateOn();
     if (gateOpen && player.hasLastNote && player.lastNote.slide)
-        voice.glideTo (note.pitch); // no retrigger: the slide is one continuous gesture
+        player.glideTo (note.pitch); // no retrigger: the slide is one continuous gesture
     else
-        voice.noteOn (note.pitch, note.accent);
+        player.noteOn (note.pitch, note.accent);
     player.lastNote = note;
     player.hasLastNote = true;
     player.acidGainTarget = Note::velocityGain (note.velocity);

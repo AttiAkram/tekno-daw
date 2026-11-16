@@ -55,6 +55,17 @@ double Distortion::foldbackIntegral (double x) noexcept
     return m <= 2.0 ? 0.5 * m * m - m : 3.0 * m - 0.5 * m * m - 4.0;
 }
 
+double Distortion::transfer (int shaperMode, float driveDb, float bits, double x) noexcept
+{
+    const auto driven = x * static_cast<double> (decibelsToGain (driveDb));
+    if (shaperMode == crush)
+    {
+        const auto levels = static_cast<double> (std::exp2 (std::round (std::clamp (bits, 2.0f, 16.0f)) - 1.0f));
+        return std::round (hardClip (driven) * levels) / levels;
+    }
+    return shaperMode == fold ? foldback (driven) : hardClip (driven);
+}
+
 void Distortion::prepare (double newSampleRate) noexcept
 {
     sampleRate = newSampleRate > 0.0 ? newSampleRate : 48000.0;
@@ -97,6 +108,7 @@ EffectMeters Distortion::process (float* left, float* right, int numSamples,
         {
             auto& s = channels[c];
             const auto dry = io[c][i];
+            meters.level = std::max (meters.level, std::abs (dry));
             const auto x = static_cast<double> (dry * driveGain);
             double y;
             if (shaperMode == crush)

@@ -113,6 +113,7 @@ void Session::clearChannelSlot (int index)
     c.kind = InstrumentKind::acid;
     c.acid.store ({});
     c.sampler.store ({});
+    c.sub.store ({});
     c.mixer.store ({});
     c.effects.store ({});
     c.sample = nullptr;
@@ -130,6 +131,7 @@ juce::String Session::writeChannel (int index, const ChannelData& data)
     c.kind = data.kind;
     c.acid.store (data.acid);
     c.sampler.store (data.sampler);
+    c.sub.store (data.sub);
     c.mixer.store (data.mixer);
     c.effects.store (data.effects);
     c.peak = 0.0f;
@@ -150,6 +152,7 @@ ChannelData Session::captureChannel (int index) const
     data.sample = project.channelSamples[channelSlot (index)];
     data.acid = c.acid.load();
     data.sampler = c.sampler.load();
+    data.sub = c.sub.load();
     data.mixer = c.mixer.load();
     data.effects = c.effects.load();
     for (size_t p = 0; p < data.lanes.size(); ++p)

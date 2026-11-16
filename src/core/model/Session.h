@@ -58,6 +58,7 @@ struct ChannelData
     juce::String sample; // origin: "builtin:kick", an absolute path, or empty
     AcidSettings acid;
     SamplerSettings sampler;
+    SubSettings sub;
     MixerSettings mixer;
     EffectChainSettings effects {};
     std::array<std::vector<Note>, 16> lanes {}; // the channel's notes in each pattern

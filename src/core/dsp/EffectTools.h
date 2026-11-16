@@ -17,12 +17,14 @@
 
 namespace tekno::core::dsp
 {
-/** What an effect tells the meters after a block: its loudest output sample, and for a distortion how
-    far past full scale its input went (0 = never clipped). */
+/** What an effect tells the meters after a block: its loudest output sample, for a distortion how far
+    past full scale its input went (0 = never clipped), and for an effect with a curve how far along the
+    curve's input the sound reached (the band on its graph). */
 struct EffectMeters
 {
     float peak = 0.0f;
     float clip = 0.0f;
+    float level = 0.0f;
 };
 
 /** Dry and wet levels for a mix knob: both full at 0.5, so an insert delay or reverb adds to the dry

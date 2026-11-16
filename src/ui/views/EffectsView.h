@@ -20,10 +20,12 @@
 namespace tekno::ui
 {
 /** The insert effects of the selected channel, or of the master: one card per slot, left to right in
-    the order the sound goes through them. A card has the effect's knobs (from its parameter table),
-    its choices, bypass, move left/right, remove, and a light: ink while it is making sound, the warning
-    colour when a distortion clips hard. An empty slot offers "+ add". Every change is an fx.* command
-    naming its target, so it undoes, and the terminal can do the same. */
+    the order the sound goes through them. A card has the effect's graph (what it does to the sound, see
+    EffectGraph), its knobs (from its parameter table), its choices, bypass, move left/right, remove,
+    and a light: ink while it is making sound, the warning colour when a distortion clips hard. The
+    waveshaper's points are dragged on its graph, and its ready-made curves sit above it. An empty slot
+    offers "+ add". Every change is an fx.* command naming its target, so it undoes, and the terminal
+    can do the same. */
 class EffectsView final : public juce::Component, private juce::Timer
 {
 public:

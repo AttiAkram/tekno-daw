@@ -4,6 +4,7 @@ add_library(tekno_ui STATIC
     theme/Contrast.cpp
     theme/Fonts.cpp
     theme/TeknoLookAndFeel.cpp
+    components/EffectGraph.cpp
     components/IconButton.cpp
     components/LevelMeters.cpp
     components/Terminal.cpp

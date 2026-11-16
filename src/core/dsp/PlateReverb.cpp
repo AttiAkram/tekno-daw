@@ -19,6 +19,14 @@ namespace
     } // marks the paper's tap positions
 } // namespace
 
+float PlateReverb::tailSeconds (float decayParam) noexcept
+{
+    // The tank's loop: both halves' delays and allpasses, as the paper gives them at 29761 Hz.
+    constexpr double loopSeconds = (672.0 + 4453.0 + 1800.0 + 3720.0 + 908.0 + 4217.0 + 2656.0 + 3163.0) / paperRate;
+    const auto perLoopDb = -20.0 * 4.0 * std::log10 (static_cast<double> (tankGain (decayParam)));
+    return static_cast<float> (60.0 / perLoopDb * loopSeconds);
+}
+
 int PlateReverb::scaled (int samples) const noexcept
 {
     return std::max (1, static_cast<int> (std::lround (samples * sampleRate / paperRate)));
@@ -74,7 +82,7 @@ void PlateReverb::reset() noexcept
 EffectMeters PlateReverb::process (float* left, float* right, int numSamples,
                                    const std::array<float, maxEffectParams>& p) noexcept
 {
-    const auto tankDecay = 0.2f + 0.77f * std::clamp (p[decay], 0.0f, 1.0f); // up to 0.97: very long tails
+    const auto tankDecay = tankGain (p[decay]); // up to 0.97: very long tails
     const auto damp = 0.05f + 0.8f * std::clamp (p[damping], 0.0f, 1.0f);
     const auto predelaySamples = static_cast<int> (std::clamp (p[predelay], 0.0f, 200.0f) * 0.001f * sampleRate);
     const auto cutCoeff = onePole (20.0f * std::pow (40.0f, std::clamp (p[lowcut], 0.0f, 1.0f)), sampleRate);

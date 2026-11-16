@@ -168,9 +168,10 @@ void PianoRollView::scrollToNotesIfNew()
     scrolledFor = key;
     if (shown.notes.empty())
     {
-        scrollTo (session.channel (shown.channel).kind.load() == core::InstrumentKind::sampler
-                      ? core::Step::samplerRootNote
-                      : 48);
+        const auto kind = session.channel (shown.channel).kind.load();
+        scrollTo (kind == core::InstrumentKind::sampler ? core::Step::samplerRootNote
+                  : kind == core::InstrumentKind::sub   ? core::defaultNoteFor (kind) + 3
+                                                        : 48);
         return;
     }
     auto sum = 0;

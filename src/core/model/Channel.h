@@ -22,9 +22,19 @@ enum class InstrumentKind : std::uint8_t
 {
     acid,
     sampler,
+    sub,
 };
 
-const char* instrumentName (InstrumentKind kind) noexcept; // "acid", "sampler"
+const char* instrumentName (InstrumentKind kind) noexcept; // "acid", "sampler", "sub"
+
+/** The monophonic synths (acid, sub): they share gates, slides and live legato. */
+constexpr bool isMonoSynth (InstrumentKind kind) noexcept
+{
+    return kind != InstrumentKind::sampler;
+}
+
+/** The note a new step gets: A1 for the sub, A2 for the acid, C4 (the sample as it is) for a sampler. */
+int defaultNoteFor (InstrumentKind kind) noexcept;
 
 // Each group of parameters comes twice: a plain struct (a copy: files, undo, defaults) and the same
 // values as atomics (shared live with the audio thread). load() and store() move between the two.
@@ -53,6 +63,26 @@ struct AcidParams
     AcidParams() noexcept { store ({}); }
     AcidSettings load() const noexcept;
     void store (const AcidSettings&) noexcept;
+};
+
+/** The sub bass's controls (SubVoice): normalised 0..1, except glide in seconds. */
+struct SubSettings
+{
+    float drive = 0.3f;
+    float punch = 0.4f;
+    float decay = 0.5f;
+    float glide = 0.05f; // seconds a slide takes, in the acid's range
+
+    bool operator== (const SubSettings&) const = default;
+};
+
+struct SubParams
+{
+    std::atomic<float> drive, punch, decay, glide;
+
+    SubParams() noexcept { store ({}); }
+    SubSettings load() const noexcept;
+    void store (const SubSettings&) noexcept;
 };
 
 /** The drum sampler's controls. */
@@ -107,6 +137,7 @@ struct Channel
     std::atomic<InstrumentKind> kind { InstrumentKind::acid };
     AcidParams acid;
     SamplerParams sampler;
+    SubParams sub;
     MixerParams mixer;
     EffectChain effects; // inserts, before the fader
 

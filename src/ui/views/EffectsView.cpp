@@ -8,6 +8,8 @@
 
 #include "ui/views/EffectsView.h"
 
+#include "ui/components/EffectGraph.h"
+
 namespace tekno::ui
 {
 namespace
@@ -21,7 +23,10 @@ namespace
     constexpr float headerHeight = 32.0f;
     constexpr float knobSize = 40.0f;
     constexpr float knobCell = 72.0f;
+    constexpr float knobRowHeight = knobSize + 36.0f; // the knob, its name and its value
     constexpr float lightSize = 8.0f;
+    constexpr float captionHeight = 18.0f;
+    constexpr float maxGraphHeight = 160.0f, minGraphHeight = 56.0f;
 
     juce::String formatValue (const core::EffectParamInfo& param, float value)
     {
@@ -50,7 +55,28 @@ public:
     Card (EffectsView& ownerView, int slotIndex)
         : owner (ownerView)
         , index (slotIndex)
+        , graph (ownerView.lnf)
     {
+        graph.onDragStart = [this] { owner.commands.beginGesture(); }; // a whole drag = one undo step
+        graph.onDragEnd = [this] { owner.commands.endGesture(); };
+        graph.onPointMoved = [this] (int point, float value)
+        {
+            const auto first = core::effectInfo (EffectType::shaper).paramIndex ("p1");
+            set (static_cast<size_t> (first + point), juce::String (value, 3));
+        };
+        addChildComponent (graph);
+        const auto& curves = core::shaperCurves();
+        for (size_t c = 0; c < curveButtons.size() && c < curves.size(); ++c)
+        {
+            auto& b = curveButtons[c];
+            b.setButtonText (curves[c].name);
+            b.setTooltip (curves[c].help);
+            setRole (b, Role::nav);
+            b.setMouseClickGrabsKeyboardFocus (false);
+            b.onClick = [this, name = juce::String (curves[c].name)]
+            { owner.run ("fx.curve", { { "slot", index + 1 }, { "curve", name } }); };
+            addChildComponent (b);
+        }
         for (auto& knob : knobs)
         {
             knob.setSliderStyle (juce::Slider::RotaryVerticalDrag);
@@ -109,10 +135,29 @@ public:
         left.setEnabled (index > 0);
         right.setEnabled (index < core::effectSlots - 1);
 
-        // The light: take what the engine left, let it fall slowly.
+        // The light: take what the engine left, let it fall slowly. The graph's band does the same.
         const auto activity = slot.activity.exchange (0.0f), clip = slot.clip.exchange (0.0f);
         light = std::max (activity > 0.001f ? 1.0f : 0.0f, light * 0.85f);
         clipping = std::max (clip > 0.5f ? 1.0f : 0.0f, clipping * 0.9f);
+        reach = std::max (slot.level.exchange (0.0f), reach * 0.9f);
+        std::array<float, core::maxEffectParams> values {};
+        for (size_t p = 0; p < values.size(); ++p)
+            values[p] = slot.values[p].load();
+        graph.show (now, values, reach);
+
+        // The ready-made curve the points match, if any, shows as chosen.
+        if (now == EffectType::shaper)
+        {
+            const auto first = static_cast<size_t> (core::effectInfo (now).paramIndex ("p1"));
+            const auto& curves = core::shaperCurves();
+            for (size_t c = 0; c < curveButtons.size() && c < curves.size(); ++c)
+            {
+                auto same = true;
+                for (size_t k = 0; k < curves[c].points.size(); ++k)
+                    same = same && std::abs (values[first + k] - curves[c].points[k]) < 1.0e-3f;
+                curveButtons[c].setToggleState (same, juce::dontSendNotification);
+            }
+        }
         repaint();
     }
 
@@ -145,12 +190,22 @@ public:
         g.setColour (bypassed ? muted : ink);
         g.drawText (core::effectInfo (shownType).title, header, juce::Justification::centredLeft, true);
 
+        // How to read the graph, under it.
+        g.setFont (lnf.fonts().font (type::meta));
+        if (graph.isVisible())
+        {
+            g.setColour (muted);
+            g.drawText (
+                EffectGraph::caption (shownType),
+                graph.getBounds().toFloat().withY (static_cast<float> (graph.getBottom())).withHeight (captionHeight),
+                juce::Justification::centredLeft, true);
+        }
+
         // Knob labels and values.
         const auto& info = core::effectInfo (shownType);
-        g.setFont (lnf.fonts().font (type::meta));
         for (size_t p = 0; p < info.params.size(); ++p)
         {
-            if (info.params[p].isChoice())
+            if (info.params[p].isChoice() || info.params[p].graph)
                 continue;
             const auto k = knobs[p].getBounds().toFloat();
             g.setColour (muted);
@@ -178,6 +233,9 @@ private:
         add.setVisible (empty);
         for (auto* b : { &bypass, &left, &right, &remove })
             b->setVisible (! empty);
+        graph.setVisible (! empty);
+        for (auto& b : curveButtons)
+            b.setVisible (shownType == EffectType::shaper && b.getButtonText().isNotEmpty());
         if (! empty)
         {
             const auto& info = core::effectInfo (shownType);
@@ -190,17 +248,21 @@ private:
                     {
                         auto& b = choiceFor (p, c);
                         b.setButtonText (param.choices[c]);
+                        b.setTooltip (param.help);
                         b.onClick = [this, p, c]
                         { set (p, juce::String (core::effectInfo (shownType).params[p].choices[c])); };
                         b.setVisible (true);
                     }
                     continue;
                 }
+                if (param.graph)
+                    continue; // dragged on the graph
                 auto& knob = knobs[p];
                 knob.setRange (param.min, param.max);
                 if (juce::String (param.unit) == "bits")
                     knob.setRange (param.min, param.max, 1.0);
                 knob.setDoubleClickReturnValue (true, param.defaultValue);
+                knob.setTooltip (juce::String (param.help) + "  (double-click: back to default)");
                 knob.onValueChange = [this, p, &knob] { set (p, juce::String (knob.getValue(), 4)); };
                 knob.setVisible (true);
             }
@@ -248,7 +310,8 @@ private:
             return;
         const auto& info = core::effectInfo (shownType);
 
-        // Choices first, as a row of words; then the knobs in a grid.
+        // Choices first, as a row of words (the waveshaper's curves too); then the graph; then the knobs
+        // in a grid. The graph takes what the knobs leave, and gives way on a short card.
         for (size_t p = 0; p < info.params.size(); ++p)
             if (info.params[p].isChoice())
             {
@@ -258,15 +321,42 @@ private:
                     choiceFor (p, c).setBounds (row.removeFromLeft (width).toNearestInt());
                 area.removeFromTop (space::unit * 2.0f);
             }
+        if (shownType == EffectType::shaper) // two rows of three: the names stay whole
+        {
+            constexpr size_t perRow = 3;
+            for (size_t first = 0; first < curveButtons.size(); first += perRow)
+            {
+                auto row = area.removeFromTop (shape::pillHeightCompact);
+                const auto width = row.getWidth() / static_cast<float> (perRow);
+                for (size_t c = first; c < std::min (first + perRow, curveButtons.size()); ++c)
+                    curveButtons[c].setBounds (row.removeFromLeft (width).toNearestInt());
+            }
+            area.removeFromTop (space::unit * 2.0f);
+        }
+
         const auto columns = std::max (1, static_cast<int> (area.getWidth() / knobCell));
+        auto knobCount = 0;
+        for (const auto& param : info.params)
+            knobCount += param.isChoice() || param.graph ? 0 : 1;
+        const auto knobRows = (knobCount + columns - 1) / columns;
+        const auto graphHeight =
+            std::min (maxGraphHeight, area.getHeight() - static_cast<float> (knobRows) * knobRowHeight - captionHeight -
+                                          space::unit * 2.0f);
+        graph.setVisible (graphHeight >= minGraphHeight);
+        if (graph.isVisible())
+        {
+            graph.setBounds (area.removeFromTop (graphHeight).toNearestInt());
+            area.removeFromTop (captionHeight + space::unit * 2.0f);
+        }
+
         auto n = 0;
         for (size_t p = 0; p < info.params.size(); ++p)
         {
-            if (info.params[p].isChoice())
+            if (info.params[p].isChoice() || info.params[p].graph)
                 continue;
             const auto cell = juce::Rectangle<float> (
                 area.getX() + static_cast<float> (n % columns) * (area.getWidth() / static_cast<float> (columns)),
-                area.getY() + static_cast<float> (n / columns) * (knobSize + 36.0f),
+                area.getY() + static_cast<float> (n / columns) * knobRowHeight,
                 area.getWidth() / static_cast<float> (columns), knobSize);
             knobs[p].setBounds (cell.withSizeKeepingCentre (knobSize, knobSize).toNearestInt());
             ++n;
@@ -280,7 +370,9 @@ private:
     std::array<juce::Slider, core::maxEffectParams> knobs;
     std::array<juce::TextButton, core::maxEffectParams * 4> choices;
     juce::TextButton bypass { "on" }, left { "<" }, right { ">" }, remove { "x" }, add { "+ add" };
-    float light = 0.0f, clipping = 0.0f;
+    EffectGraph graph;
+    std::array<juce::TextButton, 6> curveButtons; // the waveshaper's ready-made curves
+    float light = 0.0f, clipping = 0.0f, reach = 0.0f;
 };
 
 // --- the view -----------------------------------------------------------------------------------------

@@ -43,6 +43,10 @@ public:
     EffectMeters process (float* left, float* right, int numSamples,
                           const std::array<float, maxEffectParams>& params) noexcept;
 
+    /** What the graph draws: the output for a steady input x (the dry signal, -1..1) with this mode,
+        drive and bits. The same shapers the audio goes through, without the tone, mix and output. */
+    static double transfer (int mode, float driveDb, float bits, double x) noexcept;
+
     // The shapers and their antiderivatives, public for the tests.
     static double hardClip (double x) noexcept;
     static double hardClipIntegral (double x) noexcept;

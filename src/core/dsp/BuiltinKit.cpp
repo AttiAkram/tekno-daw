@@ -166,6 +166,96 @@ namespace
         normalise (b);
         return b;
     }
+    /** The last `seconds` of a buffer faded to zero, so a sound never ends on a click. */
+    double fadeOut (double t, double length, double seconds)
+    {
+        return t > length - seconds ? std::max (0.0, (length - t) / seconds) : 1.0;
+    }
+
+    /** A drum skin: a sine falling from `startHz` to `bodyHz`, an inharmonic overtone (a membrane's
+        first is at 1.59 times), and the stick as a short band of noise. Tuned with notes, one sound is
+        every drum of its kind: C4 plays it as it is. */
+    juce::AudioBuffer<float> skin (double startHz, double bodyHz, double fall, double decay, double length,
+                                   double stick, std::uint32_t seed)
+    {
+        auto b = buffer (length);
+        auto* out = b.getWritePointer (0);
+        Noise noise (seed);
+        auto band = Biquad::bandPass (2500.0, 1.0);
+        double phase = 0.0;
+        for (int i = 0; i < b.getNumSamples(); ++i)
+        {
+            const auto t = i / sampleRate;
+            phase += twoPi * (bodyHz + (startHz - bodyHz) * std::exp (-t / fall)) / sampleRate;
+            const auto body = std::sin (phase) * std::exp (-t / decay) +
+                              0.25 * std::sin (1.59 * phase) * std::exp (-t / (decay * 0.4));
+            const auto hit = band.process (noise.next()) * std::exp (-t / 0.004) * stick;
+            out[i] = static_cast<float> ((std::tanh (1.3 * body) + hit) * fadeOut (t, length, 0.05));
+        }
+        normalise (b);
+        return b;
+    }
+
+    /** A tight body and a burst of bright noise: the snare. */
+    juce::AudioBuffer<float> snare()
+    {
+        constexpr double length = 0.4;
+        auto b = buffer (length);
+        auto* out = b.getWritePointer (0);
+        Noise noise (13);
+        auto highPass = Biquad::highPass (1800.0, 0.7);
+        double phase = 0.0;
+        for (int i = 0; i < b.getNumSamples(); ++i)
+        {
+            const auto t = i / sampleRate;
+            phase += twoPi * (185.0 + 60.0 * std::exp (-t / 0.015)) / sampleRate;
+            const auto body = std::sin (phase) * std::exp (-t / 0.07);
+            const auto rattle = highPass.process (noise.next()) * std::exp (-t / 0.11);
+            out[i] = static_cast<float> ((0.7 * body + 0.8 * rattle) * fadeOut (t, length, 0.05));
+        }
+        normalise (b);
+        return b;
+    }
+
+    /** Two high tones and a click of noise, gone in a few milliseconds: the stick on the rim. */
+    juce::AudioBuffer<float> rim()
+    {
+        constexpr double length = 0.12;
+        auto b = buffer (length);
+        auto* out = b.getWritePointer (0);
+        Noise noise (17);
+        auto band = Biquad::bandPass (3200.0, 2.0);
+        for (int i = 0; i < b.getNumSamples(); ++i)
+        {
+            const auto t = i / sampleRate;
+            const auto tone =
+                (std::sin (twoPi * 1700.0 * t) + 0.6 * std::sin (twoPi * 470.0 * t)) * std::exp (-t / 0.012);
+            const auto click = band.process (noise.next()) * std::exp (-t / 0.003);
+            out[i] = static_cast<float> ((tone + click) * fadeOut (t, length, 0.03));
+        }
+        normalise (b);
+        return b;
+    }
+
+    /** High noise that swells for a moment and falls: one shake. */
+    juce::AudioBuffer<float> shaker()
+    {
+        constexpr double length = 0.16;
+        auto b = buffer (length);
+        auto* out = b.getWritePointer (0);
+        Noise noise (19);
+        auto highPass1 = Biquad::highPass (5500.0, 0.7);
+        auto highPass2 = Biquad::highPass (5500.0, 0.7);
+        for (int i = 0; i < b.getNumSamples(); ++i)
+        {
+            const auto t = i / sampleRate;
+            const auto env = std::min (1.0, t / 0.012) * std::exp (-std::max (0.0, t - 0.012) / 0.035);
+            out[i] = static_cast<float> (highPass2.process (highPass1.process (noise.next())) * env *
+                                         fadeOut (t, length, 0.04));
+        }
+        normalise (b);
+        return b;
+    }
 } // namespace
 
 juce::AudioBuffer<float> make (const juce::String& name)
@@ -178,6 +268,16 @@ juce::AudioBuffer<float> make (const juce::String& name)
         return hat (0.16, 0.6, 5);
     if (name == "clap")
         return clap();
+    if (name == "snare")
+        return snare();
+    if (name == "tom")
+        return skin (175.0, 105.0, 0.045, 0.2, 0.7, 0.5, 11);
+    if (name == "conga")
+        return skin (340.0, 260.0, 0.02, 0.09, 0.35, 0.9, 23);
+    if (name == "rim")
+        return rim();
+    if (name == "shaker")
+        return shaker();
     return {};
 }
 } // namespace tekno::core::dsp::builtinKit

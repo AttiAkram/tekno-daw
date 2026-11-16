@@ -67,6 +67,8 @@ public:
 
         if (options.render != juce::File())
         {
+            // The command line renders the project it is given, or the plain default one: never the demo,
+            // so scripted renders stay the same.
             const auto result = core::renderToWav (session, options.render, options.bars);
             if (result.wasOk())
                 std::cout << "rendered " << options.bars << " bars: " << options.render.getFullPathName() << "\n";
@@ -87,6 +89,12 @@ public:
             exitEarly (1);
             return;
         }
+
+        // With no project to open, the window starts on the demo: something to play straight away.
+        // NEW goes back to the plain starting project.
+        if (options.project == juce::File())
+            if (const auto demo = commands.execute ("project.demo"); ! demo.succeeded())
+                std::cerr << "tekno-daw: " << demo.error << "\n";
 
         projectActions = std::make_unique<ui::ProjectActions> (session, commands);
 

@@ -8,6 +8,8 @@
 
 #include "core/model/Channel.h"
 
+#include "core/model/Step.h"
+
 namespace tekno::core
 {
 namespace
@@ -17,7 +19,30 @@ namespace
 
 const char* instrumentName (InstrumentKind kind) noexcept
 {
-    return kind == InstrumentKind::sampler ? "sampler" : "acid";
+    switch (kind)
+    {
+    case InstrumentKind::sampler:
+        return "sampler";
+    case InstrumentKind::sub:
+        return "sub";
+    case InstrumentKind::acid:
+        break;
+    }
+    return "acid";
+}
+
+int defaultNoteFor (InstrumentKind kind) noexcept
+{
+    switch (kind)
+    {
+    case InstrumentKind::sampler:
+        return Step::samplerRootNote;
+    case InstrumentKind::sub:
+        return 33; // A1, 55 Hz
+    case InstrumentKind::acid:
+        break;
+    }
+    return Step {}.note; // A2
 }
 
 AcidSettings AcidParams::load() const noexcept
@@ -35,6 +60,19 @@ void AcidParams::store (const AcidSettings& s) noexcept
     accent.store (s.accent, relaxed);
     drive.store (s.drive, relaxed);
     shape.store (s.shape, relaxed);
+    glide.store (s.glide, relaxed);
+}
+
+SubSettings SubParams::load() const noexcept
+{
+    return { drive.load (relaxed), punch.load (relaxed), decay.load (relaxed), glide.load (relaxed) };
+}
+
+void SubParams::store (const SubSettings& s) noexcept
+{
+    drive.store (s.drive, relaxed);
+    punch.store (s.punch, relaxed);
+    decay.store (s.decay, relaxed);
     glide.store (s.glide, relaxed);
 }
 

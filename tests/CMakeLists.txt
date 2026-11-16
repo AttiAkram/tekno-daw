@@ -7,6 +7,7 @@ add_executable(tekno_tests
     core/ChannelTests.cpp
     core/CommandLineTests.cpp
     core/CommandTests.cpp
+    core/DemoTests.cpp
     core/DriveTests.cpp
     core/EffectsTests.cpp
     core/KeymapTests.cpp
@@ -15,6 +16,7 @@ add_executable(tekno_tests
     core/NoteTests.cpp
     core/PatternTests.cpp
     core/ScaleTests.cpp
+    core/SubTests.cpp
     core/ProjectFileTests.cpp
     core/VersionTests.cpp
     ui/FontsTests.cpp
@@ -69,7 +71,7 @@ if(TEKNO_GUI_TESTS)
     add_test(NAME app.snapshot.pianoroll COMMAND tekno-daw ${gui_test_args} --theme=light --view=pianoroll "--snapshot=${CMAKE_BINARY_DIR}/snapshots/pianoroll-light.png")
     add_test(NAME app.snapshot.keys COMMAND tekno-daw ${gui_test_args} --theme=light --view=keys "--snapshot=${CMAKE_BINARY_DIR}/snapshots/keys-light.png")
     add_test(NAME app.snapshot.tiles COMMAND tekno-daw ${gui_test_args} --theme=dark "--run=ui.tile pianoroll; ui.tile mixer; ui.terminal" "--snapshot=${CMAKE_BINARY_DIR}/snapshots/tiles-dark.png")
-    add_test(NAME app.snapshot.effects COMMAND tekno-daw ${gui_test_args} --theme=light --view=effects "--run=fx.add delay; fx.add distortion; fx.add reverb; ui.terminal" "--snapshot=${CMAKE_BINARY_DIR}/snapshots/effects-light.png")
+    add_test(NAME app.snapshot.effects COMMAND tekno-daw ${gui_test_args} --theme=light --view=effects "--run=fx.add distortion; fx.add shaper; fx.add delay; fx.add reverb; ui.terminal" "--snapshot=${CMAKE_BINARY_DIR}/snapshots/effects-light.png")
     add_test(NAME app.snapshot.mixer COMMAND tekno-daw ${gui_test_args} --theme=dark --view=mixer "--snapshot=${CMAKE_BINARY_DIR}/snapshots/mixer-dark.png")
     # The smallest window the app allows: the top bar must still fit between the name and the transport.
     add_test(NAME app.snapshot.narrow COMMAND tekno-daw ${gui_test_args} --theme=dark --size=1024x640 "--snapshot=${CMAKE_BINARY_DIR}/snapshots/narrow-dark.png")

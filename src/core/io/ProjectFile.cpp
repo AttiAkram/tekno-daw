@@ -56,6 +56,12 @@ namespace
                ", \"glide\": " + number (a.glide) + " }";
     }
 
+    juce::String subLine (const SubSettings& s)
+    {
+        return "{ \"drive\": " + number (s.drive) + ", \"punch\": " + number (s.punch) +
+               ", \"decay\": " + number (s.decay) + ", \"glide\": " + number (s.glide) + " }";
+    }
+
     juce::String samplePath (const juce::String& origin, const juce::File& projectFolder)
     {
         if (origin.isEmpty() || origin.startsWith (SampleLibrary::builtinPrefix))
@@ -219,6 +225,17 @@ namespace
             a.glide = static_cast<float> (
                 number (obj, "glide", path, a.glide, AcidSettings::minGlide, AcidSettings::maxGlide));
             return a;
+        }
+
+        SubSettings sub (const juce::var& obj, const juce::String& path)
+        {
+            SubSettings s;
+            s.drive = unit (obj, "drive", path, s.drive);
+            s.punch = unit (obj, "punch", path, s.punch);
+            s.decay = unit (obj, "decay", path, s.decay);
+            s.glide = static_cast<float> (
+                number (obj, "glide", path, s.glide, AcidSettings::minGlide, AcidSettings::maxGlide));
+            return s;
         }
 
         /** A list of steps into `out`. Missing notes default to `defaultNote`. */
@@ -405,11 +422,14 @@ namespace
             const auto path = "channels[" + juce::String (i) + "]";
             ChannelData out;
             const auto instrument = r.text (c, "instrument", path, "acid");
-            if (instrument != "acid" && instrument != "sampler")
-                r.fail (path + ".instrument", "'" + instrument + "' must be \"acid\" or \"sampler\"");
-            out.kind = instrument == "sampler" ? InstrumentKind::sampler : InstrumentKind::acid;
+            if (instrument != "acid" && instrument != "sampler" && instrument != "sub")
+                r.fail (path + ".instrument", "'" + instrument + "' must be \"acid\", \"sub\" or \"sampler\"");
+            out.kind = instrument == "sampler" ? InstrumentKind::sampler
+                       : instrument == "sub"   ? InstrumentKind::sub
+                                               : InstrumentKind::acid;
             out.name = r.text (c, "name", path, instrument).trim().substring (0, 40);
             out.acid = r.acid (c["acid"], path + ".acid");
+            out.sub = r.sub (c["sub"], path + ".sub");
 
             const auto s = c["sampler"];
             const auto samplerPath = path + ".sampler";
@@ -481,8 +501,7 @@ namespace
                     out = readNotes (r, lane["notes"], lanePath + ".notes");
                 else
                 {
-                    const auto defaultNote =
-                        owner.kind == InstrumentKind::sampler ? Step::samplerRootNote : Step {}.note;
+                    const auto defaultNote = defaultNoteFor (owner.kind);
                     std::array<Step, Pattern::maxSteps> grid {};
                     r.steps (lane["steps"], lanePath + ".steps", grid, defaultNote);
                     out = steps::toNotes (grid, data.patterns[static_cast<size_t> (index)].length);
@@ -616,6 +635,8 @@ juce::String toText (const Session& session, const juce::File& projectFolder)
         lines.add ("      \"instrument\": " + quoted (instrumentName (kind)) + ",");
         if (kind == InstrumentKind::acid)
             lines.add ("      \"acid\": " + acidLine (channel.acid.load()) + ",");
+        else if (kind == InstrumentKind::sub)
+            lines.add ("      \"sub\": " + subLine (channel.sub.load()) + ",");
         else
             lines.add (
                 "      \"sampler\": " +

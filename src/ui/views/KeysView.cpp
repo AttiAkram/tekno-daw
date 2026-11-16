@@ -31,13 +31,15 @@ namespace
             return "acid channels";
         if (context == "sampler")
             return "drum channels";
+        if (context == "sub")
+            return "sub bass channels";
         return context;
     }
 
     /** What a key in this context covers when it is pressed: the broader contexts, nearest first. */
     juce::StringArray broaderThan (const juce::String& context)
     {
-        if (context == "acid" || context == "sampler")
+        if (context == "acid" || context == "sub" || context == "sampler")
             return { "pattern", "pianoroll", "mixer", "global" };
         if (context == "global")
             return {};

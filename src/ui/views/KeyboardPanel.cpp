@@ -351,7 +351,10 @@ void KeyboardPanel::paint (juce::Graphics& g)
         g.setFont (lnf.fonts().font (type::body));
         g.setColour (ink);
         g.drawText ("playing " + name +
-                        (targetIsSampler() ? "  (drums: one hit per key)" : "  (acid: mono, keys held together slide)"),
+                        (targetIsSampler()
+                             ? juce::String ("  (drums: one hit per key)")
+                             : juce::String ("  (") + core::instrumentName (session.channel (channel).kind.load()) +
+                                   ": mono, keys held together slide)"),
                     info.removeFromTop (22.0f), juce::Justification::centredLeft, true);
 
         juce::String sound;

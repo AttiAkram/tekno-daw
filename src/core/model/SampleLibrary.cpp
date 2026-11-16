@@ -28,7 +28,7 @@ SampleLibrary::SampleLibrary()
 
 juce::StringArray SampleLibrary::builtinNames()
 {
-    return { "kick", "hat", "openhat", "clap" };
+    return { "kick", "hat", "openhat", "clap", "snare", "tom", "conga", "rim", "shaker" };
 }
 
 SampleLibrary::Result SampleLibrary::get (const juce::String& origin)

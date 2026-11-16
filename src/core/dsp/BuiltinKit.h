@@ -16,6 +16,7 @@ namespace tekno::core::dsp::builtinKit
     shipping anyone else's samples. Deterministic: the same sounds on every run. */
 inline constexpr double sampleRate = 48000.0;
 
-/** Mono audio for "kick", "hat", "openhat" or "clap"; empty for anything else. Peaks at about 0.9. */
+/** Mono audio for "kick", "hat", "openhat", "clap", "snare", "tom", "conga", "rim" or "shaker"; empty
+    for anything else. Peaks at about 0.9. Toms and congas are tuned so that C4 plays them as they are. */
 juce::AudioBuffer<float> make (const juce::String& name);
 } // namespace tekno::core::dsp::builtinKit

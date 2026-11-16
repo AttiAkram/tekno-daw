@@ -29,7 +29,7 @@ and project version history.
 | ✅ M1 | MVP: an acid synth playing a 16-step pattern |
 | ✅ M2 | Real sequencer: patterns, accent / slide / tie, swing, project files, drive, terminal |
 | ✅ M3 | Channel rack, drum sampler, mixer, piano roll, keymaps per context, tiling panels |
-| ▶ M4 | Native effects (✅), live play from the PC keyboard and MIDI (✅), macros, VST3 hosting |
+| ▶ M4 | Native effects, live play from the PC keyboard and MIDI, sub bass, effect graphs, waveshaper, demo (✅); macros, VST3 hosting |
 | M5 | Audio export, full project format, more import formats |
 | M6 | Arrangement and automation |
 | M7 | Polish and packaging (AppImage, Flatpak, AUR) |
@@ -44,6 +44,11 @@ cmake --build --preset dev --target run
 
 The first configure downloads JUCE and Catch2 once (pinned version + SHA-256) into `.cache/deps/`;
 after that everything works offline. A full build takes about a minute on a 12-core machine.
+
+The window opens on a **demo**: an original freetekno / hardtek loop set at 162 BPM in G# minor. Press PLAY,
+then switch between its patterns while it plays: 1 intro, 2 groove, 3 acid, 4 break (a new pattern starts at the next
+bar). NEW starts from a plain loop instead; `project.demo` in the terminal brings the demo back. The demo
+is also a normal project file, [`examples/demo.tekno`](examples/demo.tekno).
 
 ### Start it with one click
 
@@ -121,21 +126,44 @@ tekno-daw --smoke-test         open the window and quit after a second
 tekno-daw --version
 ```
 
+### Instruments
+
+"+ channel", under the last channel of the step sequencer, adds one:
+
+- **303 acid** — the bass line synth: cutoff, resonance, envelope, decay, accent, drive, a saw-to-square
+  shape and the glide of the slides.
+- **Sub bass** — a sine with a punch (it starts high and falls into the note, like a kick), drive that adds
+  the harmonics small speakers need, decay (a pluck at 0, held at 1) and glide. Same slides and ties as
+  the acid. New steps start on A1.
+- **Drums** — built-in sounds made by code: kick, hat, open hat, clap, snare, tom, conga, rim, shaker, or a
+  sound from a file. Toms and congas play C4 as they are; other notes tune them, so one tom channel is a
+  whole set of toms.
+
+Rest the mouse on a knob to see what it does; double-click it to go back to its default. From the
+terminal: `channel.add sub`, `sub.drive 0.6`, `channel.add sampler name=toms sample=builtin:tom`.
+
 ### Effects
 
 Each channel, and the master, has four insert slots, before the fader. Open the effects panel from the
 top bar, with Alt+4 or with F8:
-"+ add" puts a distortion, a ping-pong delay or a plate reverb in a slot, and each card has its knobs,
-on/off, move left/right and remove. A light on each card shows when it is making sound, and turns red
-when a distortion clips hard. The mixer shows each strip's effects by name.
+"+ add" puts a distortion, a waveshaper, a ping-pong delay or a plate reverb in a slot, and each card has
+a graph of what the effect does, its knobs, on/off, move left/right and remove. A light on each card shows
+when it is making sound, and turns red when a distortion clips hard. The mixer shows each strip's effects
+by name.
 
 - **Distortion** — hard clip, foldback or bitcrush, with drive, tone, bits, rate, mix and output. Clip and
-  fold are antialiased (ADAA), crush aliases on purpose. Made for distorted kicks and sub-basses.
+  fold are antialiased (ADAA), crush aliases on purpose. Made for distorted kicks and sub-basses. Its
+  graph is the curve after the drive, with a grey band for how far your sound reaches into it.
+- **Waveshaper** — a curve you draw: drag its nine points up and down on the graph, or start from soft,
+  hard, fold, tube, rectify or clean. Antialiased exactly (ADAA on the straight segments), with drive,
+  mix and output.
 - **Ping-pong delay** — synced to the tempo in steps (3 = a dotted eighth), feedback up to 1.1 for dub
-  runaways (it stays bounded), a tone and a low cut in the feedback, ping-pong amount.
-- **Plate reverb** — Jon Dattorro's plate (JAES 1997): decay, damping, predelay, low cut, mix.
+  runaways (it stays bounded), a tone and a low cut in the feedback, ping-pong amount. Its graph shows the
+  echoes over two bars, left above and right below.
+- **Plate reverb** — Jon Dattorro's plate (JAES 1997): decay, damping, predelay, low cut, mix. Its graph
+  shows the tail, and dashed, how much sooner the highs die.
 
-From the terminal: `fx.add delay`, `fx.set 1 feedback 0.8`, `fx.set 2 mode fold`, `fx.bypass 1 on`,
+From the terminal: `fx.add delay`, `fx.set 1 feedback 0.8`, `fx.set 2 mode fold`, `fx.curve 1 tube`, `fx.bypass 1 on`,
 `fx.move 2 1`, `fx.remove 1`, `fx.list`, with `channel=N` or `master=on`. A project can have up to 8
 delays and 8 reverbs. The acid synth also has a **shape** knob (saw to square, morphing) and a **glide**
 knob (how long a slide takes). New projects start at 170 BPM.

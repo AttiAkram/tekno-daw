@@ -23,6 +23,7 @@
 #include "core/dsp/Distortion.h"
 #include "core/dsp/PingPongDelay.h"
 #include "core/dsp/PlateReverb.h"
+#include "core/dsp/Shaper.h"
 #include "core/engine/AudioEngine.h"
 #include "core/io/ProjectFile.h"
 
@@ -361,6 +362,182 @@ TEST_CASE ("effects are saved by name and read back; unknown ones are skipped wi
                .contains ("mode"));
 }
 
+// --- waveshaper ------------------------------------------------------------------------------------
+
+TEST_CASE ("the waveshaper's curve goes through its points, straight between them, flat beyond",
+           "[core][effects][shaper]")
+{
+    const auto points = *shaperCurve ("tube");
+    const auto curve = dsp::Shaper::Curve::through (points);
+    for (int k = 0; k < shaperPoints; ++k)
+        CHECK (std::abs (curve.at (-1.0 + dsp::Shaper::spacing * k) - points[static_cast<size_t> (k)]) < 1.0e-6);
+    CHECK (std::abs (curve.at (-0.875) - 0.5 * (points[0] + points[1])) < 1.0e-6); // halfway: the average
+    CHECK (curve.at (-3.0) == static_cast<double> (points.front()));
+    CHECK (curve.at (2.0) == static_cast<double> (points.back()));
+
+    // Its antiderivative: the slope of the integral is the curve, across the joints and past the ends.
+    for (auto x = -1.4; x <= 1.4; x += 0.05)
+    {
+        const auto h = 1.0e-6;
+        const auto slope = (curve.integralAt (x + h) - curve.integralAt (x - h)) / (2.0 * h);
+        CAPTURE (x);
+        CHECK (std::abs (slope - curve.at (x)) < 1.0e-4);
+    }
+}
+
+TEST_CASE ("a waveshaper with the clean curve passes the sound unchanged", "[core][effects][shaper]")
+{
+    dsp::Shaper shaper;
+    shaper.prepare (rate);
+    auto params = defaultsOf (EffectType::shaper);
+    const auto clean = *shaperCurve ("clean");
+    for (size_t k = 0; k < clean.size(); ++k)
+        params[static_cast<size_t> (dsp::Shaper::firstPoint) + k] = clean[k];
+    params[dsp::Shaper::drive] = 0.0f;
+    params[dsp::Shaper::output] = 0.0f;
+    std::vector<float> left (9600), right (9600), input (9600);
+    for (size_t i = 0; i < left.size(); ++i)
+        input[i] = left[i] = right[i] =
+            0.5f * static_cast<float> (std::sin (6.283185307179586 * 1000.0 * static_cast<double> (i) / rate));
+    shaper.process (left.data(), right.data(), static_cast<int> (left.size()), params);
+    double in = 0.0, out = 0.0;
+    for (size_t i = 4800; i < left.size(); ++i) // after the DC blocker has settled
+        in += static_cast<double> (input[i]) * input[i], out += static_cast<double> (left[i]) * left[i];
+    CHECK (std::abs (std::sqrt (out / in) - 1.0) < 0.01);
+}
+
+TEST_CASE ("the waveshaper's ADAA aliases much less than reading the curve sample by sample", "[core][effects][shaper]")
+{
+    // The distortion's test: a loud 2.5 kHz sine, driven 24 dB into the hard curve.
+    const auto fundamental = 2500.0;
+    const auto hard = *shaperCurve ("hard");
+    const auto curve = dsp::Shaper::Curve::through (hard);
+    std::vector<float> naive (4800), smooth (4800), right (4800);
+    for (size_t i = 0; i < naive.size(); ++i)
+    {
+        const auto s =
+            0.8f * static_cast<float> (std::sin (6.283185307179586 * fundamental * static_cast<double> (i) / rate));
+        smooth[i] = right[i] = s;
+        naive[i] = static_cast<float> (curve.at (s * 15.85));
+    }
+    dsp::Shaper shaper;
+    shaper.prepare (rate);
+    auto params = defaultsOf (EffectType::shaper);
+    for (size_t k = 0; k < hard.size(); ++k)
+        params[static_cast<size_t> (dsp::Shaper::firstPoint) + k] = hard[k];
+    params[dsp::Shaper::drive] = 24.0f;
+    params[dsp::Shaper::output] = 0.0f;
+    shaper.process (smooth.data(), right.data(), static_cast<int> (smooth.size()), params);
+
+    const auto naiveAliasing = aliasingDb ({ naive.begin() + 2400, naive.end() }, fundamental);
+    const auto adaaAliasing = aliasingDb ({ smooth.begin() + 2400, smooth.end() }, fundamental);
+    CAPTURE (naiveAliasing, adaaAliasing);
+    CHECK (adaaAliasing < naiveAliasing - 6.0);
+}
+
+TEST_CASE ("distortion and waveshaper tell how far their input reaches, for the graph's band",
+           "[core][effects][shaper]")
+{
+    auto reach = [] (EffectType type, float driveDb)
+    {
+        std::vector<float> left (4800), right (4800);
+        for (size_t i = 0; i < left.size(); ++i)
+            left[i] = right[i] =
+                0.5f * static_cast<float> (std::sin (6.283185307179586 * 220.0 * static_cast<double> (i) / rate));
+        auto params = defaultsOf (type);
+        if (type == EffectType::shaper)
+        {
+            dsp::Shaper shaper;
+            shaper.prepare (rate);
+            params[dsp::Shaper::drive] = driveDb;
+            return shaper.process (left.data(), right.data(), static_cast<int> (left.size()), params).level;
+        }
+        dsp::Distortion distortion;
+        distortion.prepare (rate);
+        params[dsp::Distortion::drive] = driveDb;
+        return distortion.process (left.data(), right.data(), static_cast<int> (left.size()), params).level;
+    };
+    CHECK (std::abs (reach (EffectType::distortion, 24.0f) - 0.5f) < 0.001f);    // the dry input: drive is in the curve
+    CHECK (std::abs (reach (EffectType::shaper, 6.0f) - 0.5f * 1.995f) < 0.01f); // after the drive
+}
+
+TEST_CASE ("ready-made curves: fx.curve sets every point in one undo step", "[core][effects][commands][shaper]")
+{
+    Commands f;
+    const auto& slot = f.session.selectedChannelRef().effects.slots[0];
+    REQUIRE (f.line ("fx.add shaper").isEmpty());
+    const auto before = slot.load();
+    REQUIRE (f.line ("fx.curve 1 fold").isEmpty());
+    const auto first = static_cast<size_t> (effectInfo (EffectType::shaper).paramIndex ("p1"));
+    const auto fold = *shaperCurve ("fold");
+    for (size_t k = 0; k < fold.size(); ++k)
+        CHECK (slot.values[first + k].load() == fold[k]);
+    REQUIRE (f.registry.undo());
+    CHECK (slot.load() == before);
+
+    CHECK (f.line ("fx.curve 1 jazz").contains ("there are soft, hard, fold, tube, rectify, clean"));
+    REQUIRE (f.line ("fx.add delay").isEmpty());
+    CHECK (f.line ("fx.curve 2 soft").contains ("not a waveshaper"));
+    REQUIRE (f.line ("fx.set 1 p5 0.3").isEmpty()); // one point, by name
+    CHECK (slot.values[first + 4].load() == 0.3f);
+}
+
+TEST_CASE ("the waveshaper's points are on its graph, not knobs, and its file keeps them", "[core][effects][shaper]")
+{
+    const auto& info = effectInfo (EffectType::shaper);
+    REQUIRE (info.params.size() <= static_cast<size_t> (maxEffectParams));
+    for (const auto& p : info.params)
+        CHECK (p.graph == juce::String (p.name).startsWith ("p"));
+
+    Commands f;
+    REQUIRE (f.line ("fx.add shaper").isEmpty());
+    REQUIRE (f.line ("fx.curve 1 tube").isEmpty());
+    REQUIRE (f.line ("fx.set 1 p3 -0.2").isEmpty());
+    const auto text = io::project::toText (f.session);
+    Session reopened;
+    REQUIRE (io::project::fromText (text, reopened).wasOk());
+    CHECK (reopened.selectedChannelRef().effects.slots[0].load() ==
+           f.session.selectedChannelRef().effects.slots[0].load());
+}
+
+TEST_CASE ("the reverb's drawn tail lasts about as long as the real one", "[core][effects]")
+{
+    for (const auto decay : { 0.3f, 0.6f })
+    {
+        dsp::PlateReverb reverb;
+        reverb.prepare (rate);
+        auto params = defaultsOf (EffectType::reverb);
+        params[dsp::PlateReverb::decay] = decay;
+        params[dsp::PlateReverb::damping] = 0.0f; // the drawn tail is the lows', which damping spares
+        params[dsp::PlateReverb::lowcut] = 0.0f;
+        params[dsp::PlateReverb::predelay] = 0.0f;
+        params[dsp::PlateReverb::mix] = 1.0f;
+        std::vector<float> left (static_cast<size_t> (rate * 8.0)), right (left.size());
+        left[0] = right[0] = 1.0f;
+        reverb.process (left.data(), right.data(), static_cast<int> (left.size()), params);
+
+        // Level in 20 ms windows; the time from the loudest one to 30 dB below it, doubled, is RT60.
+        const auto window = static_cast<size_t> (rate * 0.02);
+        std::vector<double> db;
+        for (size_t start = 0; start + window <= left.size(); start += window)
+        {
+            double sum = 0.0;
+            for (size_t i = start; i < start + window; ++i)
+                sum += static_cast<double> (left[i]) * left[i] + static_cast<double> (right[i]) * right[i];
+            db.push_back (10.0 * std::log10 (sum / static_cast<double> (window) + 1.0e-30));
+        }
+        const auto loudest = static_cast<size_t> (std::max_element (db.begin(), db.end()) - db.begin());
+        auto quiet = loudest;
+        while (quiet < db.size() && db[quiet] > db[loudest] - 30.0)
+            ++quiet;
+        const auto measured = 2.0 * static_cast<double> (quiet - loudest) * 0.02;
+        const auto drawn = static_cast<double> (dsp::PlateReverb::tailSeconds (decay));
+        CAPTURE (decay, measured, drawn);
+        CHECK (drawn > measured * 0.6);
+        CHECK (drawn < measured * 1.6);
+    }
+}
+
 // --- the 303's shape and glide ----------------------------------------------------------------------
 
 TEST_CASE ("shape morphs from saw to square: the even harmonics fade out", "[core][dsp][acid]")
@@ -428,5 +605,5 @@ TEST_CASE ("a longer glide takes longer to reach the new note", "[core][dsp][aci
     const auto quick = pitchAfterSlide (0.035f), slow = pitchAfterSlide (0.2f);
     CAPTURE (quick, slow);
     CHECK (quick >= 190.0); // nearly there (counted in whole periods: 25 Hz steps)
-    CHECK (slow < 170.0);  // still on its way
+    CHECK (slow < 170.0);   // still on its way
 }

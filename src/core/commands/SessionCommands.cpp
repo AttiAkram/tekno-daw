@@ -12,6 +12,7 @@
 #include <array>
 #include <optional>
 
+#include "core/io/DemoProject.h"
 #include "core/io/MidiImport.h"
 #include "core/io/ProjectFile.h"
 #include "core/model/NoteNames.h"
@@ -66,9 +67,10 @@ namespace
         if (required && kind != *required)
             return { -1, "channel " + juce::String (index + 1) + " (" +
                              session.project.channelNames[static_cast<size_t> (index)] + ") is " +
-                             (kind == InstrumentKind::sampler ? "a sampler" : "an acid synth") +
-                             ": this command is for " + (*required == InstrumentKind::sampler ? "sampler" : "acid") +
-                             " channels" };
+                             (kind == InstrumentKind::sampler ? "a sampler"
+                              : kind == InstrumentKind::sub   ? "a sub bass"
+                                                              : "an acid synth") +
+                             ": this command is for " + instrumentName (*required) + " channels" };
         return { index, {} };
     }
 
@@ -103,10 +105,10 @@ namespace
 
         auto after = current;
         change (after);
-        // A step turned on starts at the instrument's own pitch: A2 for acid, C4 (the sample as it is) for drums.
+        // A step turned on starts at the instrument's own pitch: A1 for the sub, A2 for acid, C4 (the
+        // sample as it is) for drums.
         if (! current.on && after.on)
-            after.note =
-                session.channel (channel).kind.load() == InstrumentKind::sampler ? Step::samplerRootNote : Step {}.note;
+            after.note = defaultNoteFor (session.channel (channel).kind.load());
 
         const auto before = pattern.lane (channel).notes();
         pattern.setStep (channel, index, after);
@@ -311,6 +313,8 @@ namespace
             return InstrumentKind::acid;
         if (name == "sampler" || name == "drum" || name == "drums")
             return InstrumentKind::sampler;
+        if (name == "sub" || name == "bass")
+            return InstrumentKind::sub;
         return std::nullopt;
     }
 
@@ -980,6 +984,36 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
         },
         true, true);
     add (
+        registry, "fx.curve", "Give a waveshaper a ready-made curve: soft, hard, fold, tube, rectify or clean",
+        { slotParam,
+          { "curve", Type::text, 0, 0, "soft, hard, fold, tube, rectify or clean" },
+          channelTarget,
+          masterTarget },
+        [&session] (const CommandArgs& args)
+        {
+            return editChain (session, args,
+                              [&args] (EffectChainSettings& chain, juce::String&)
+                              {
+                                  auto& slot = chain[static_cast<size_t> (static_cast<int> (args["slot"]) - 1)];
+                                  if (slot.type != EffectType::shaper)
+                                      return juce::String ("that slot is not a waveshaper");
+                                  const auto name = args["curve"].toString().trim();
+                                  const auto curve = shaperCurve (name);
+                                  if (! curve)
+                                  {
+                                      juce::StringArray names;
+                                      for (const auto& c : shaperCurves())
+                                          names.add (c.name);
+                                      return "no curve '" + name + "': there are " + names.joinIntoString (", ");
+                                  }
+                                  const auto first = effectInfo (EffectType::shaper).paramIndex ("p1");
+                                  for (size_t k = 0; k < curve->size(); ++k)
+                                      slot.values[static_cast<size_t> (first) + k] = (*curve)[k];
+                                  return juce::String();
+                              });
+        },
+        true);
+    add (
         registry, "fx.bypass", "Switch an effect off without removing it",
         { slotParam, onParam, channelTarget, masterTarget },
         [&session] (const CommandArgs& args)
@@ -1091,30 +1125,48 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
             false);
     }
     add (
-        registry, "channel.add", "Add a channel at the end and select it: acid or sampler",
-        { { "instrument", Type::text, 0, 0, "acid or sampler" },
-          { "name", Type::text, 0, 0, "name of the channel (default: the instrument)", true } },
+        registry, "channel.add", "Add a channel at the end and select it: acid, sub or sampler",
+        { { "instrument", Type::text, 0, 0, "acid, sub or sampler" },
+          { "name", Type::text, 0, 0, "name of the channel (default: the instrument)", true },
+          { "sample", Type::text, 0, 0, "for a sampler: builtin:<name> or a file, loaded in the same step", true } },
         [&session] (const CommandArgs& args)
         {
             const auto instrument = args["instrument"].toString().trim().toLowerCase();
             const auto kind = instrumentFromName (instrument);
             if (! kind)
-                return CommandOutcome::fail ("unknown instrument '" + instrument + "': use acid or sampler");
+                return CommandOutcome::fail ("unknown instrument '" + instrument + "': use acid, sub or sampler");
             auto name = args.contains ("name") ? limitName (args["name"]) : juce::String();
             if (name.isEmpty())
                 name = instrumentName (*kind);
+            juce::String origin;
+            if (args.contains ("sample"))
+            {
+                if (*kind != InstrumentKind::sampler)
+                    return CommandOutcome::fail ("only a sampler takes a sample");
+                origin = sampleOrigin (args["sample"].toString());
+                if (const auto loaded = session.samples.get (origin); loaded.sample == nullptr)
+                    return CommandOutcome::fail (loaded.error);
+            }
 
             const auto selectedBefore = session.selectedChannel.load();
             const auto index = session.addChannel (*kind, name);
             if (index < 0)
                 return CommandOutcome::fail ("all " + juce::String (Session::maxChannels) + " channels are in use");
+            if (origin.isNotEmpty())
+                session.setChannelSample (index, origin);
             session.selectedChannel.store (index);
-            return CommandOutcome::ok (
+            auto outcome = CommandOutcome::ok (
                 [&session, index, selectedBefore]
                 {
                     session.removeChannel (index);
                     session.selectedChannel.store (selectedBefore);
                 });
+            if (origin.isNotEmpty()) // absolute: redo must not depend on the folder
+            {
+                outcome.resolvedArgs = args;
+                outcome.resolvedArgs.set ("sample", origin);
+            }
+            return outcome;
         },
         true);
     add (
@@ -1190,6 +1242,19 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
         },
         true);
 
+    // --- sub bass ---------------------------------------------------------------------------------
+    constexpr auto sub = InstrumentKind::sub;
+    addChannelControl (registry, session, "sub.drive",
+                       "Saturation: 0 is a pure sine, more adds the harmonics small speakers can play", unitParam, sub,
+                       [] (Channel& c) -> auto& { return c.sub.drive; });
+    addChannelControl (registry, session, "sub.punch", "How far above the note it starts, for the attack", unitParam,
+                       sub, [] (Channel& c) -> auto& { return c.sub.punch; });
+    addChannelControl (registry, session, "sub.decay", "How long a note lasts: 0 is a pluck, 1 holds", unitParam, sub,
+                       [] (Channel& c) -> auto& { return c.sub.decay; });
+    addChannelControl (registry, session, "sub.glide", "How long a slide takes, in seconds",
+                       { "seconds", Type::number, AcidSettings::minGlide, AcidSettings::maxGlide, "0.005..0.5 s" }, sub,
+                       [] (Channel& c) -> auto& { return c.sub.glide; });
+
     // --- sampler ----------------------------------------------------------------------------------
     constexpr auto sampler = InstrumentKind::sampler;
     addChannelControl (registry, session, "sampler.tune", "Tune the sample, in semitones",
@@ -1200,7 +1265,8 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
     addChannelControl (registry, session, "sampler.accent", "How much louder accented steps hit", unitParam, sampler,
                        [] (Channel& c) -> auto& { return c.sampler.accent; });
     add (
-        registry, "sampler.load", "Load a sound: builtin:kick, builtin:hat, builtin:openhat, builtin:clap, or a file",
+        registry, "sampler.load",
+        "Load a sound: builtin:kick, hat, openhat, clap, snare, tom, conga, rim or shaker, or a file",
         { { "sample", Type::text, 0, 0, "builtin:<name>, or the path of a WAV, AIFF, FLAC or Ogg file" },
           channelTarget },
         [&session] (const CommandArgs& args)
@@ -1269,6 +1335,22 @@ void registerSessionCommands (CommandRegistry& registry, Session& session)
             session.collectSampleGarbage();
             registry.clearHistory();
             return CommandOutcome::ok();
+        },
+        false);
+    add (
+        registry, "project.demo",
+        "Open the demo: a freetekno loop set in four patterns (does not ask about unsaved changes)", {},
+        [&session, &registry] (const CommandArgs&)
+        {
+            if (const auto result = io::project::fromText (io::demoProjectText(), session); result.failed())
+                return CommandOutcome::fail ("the demo didn't open: " + result.getErrorMessage());
+            session.project.file = juce::File();
+            session.project.revision = session.project.savedRevision = 0;
+            session.collectSampleGarbage();
+            registry.clearHistory();
+            auto outcome = CommandOutcome::ok();
+            outcome.note = "demo: patterns 1 intro, 2 groove, 3 acid, 4 break; switch them while it plays";
+            return outcome;
         },
         false);
     add (

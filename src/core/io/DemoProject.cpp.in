@@ -1,0 +1,20 @@
+// tekno-daw — pattern-based DAW for acid / mental tekno
+// Copyright (C) 2026 tekno-daw contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// This program is free software: you can redistribute it and/or modify it under the terms of the
+// GNU Affero General Public License as published by the Free Software Foundation, either version 3
+// of the License, or (at your option) any later version. See the LICENSE file for details.
+
+// Made by CMake from examples/demo.tekno, as bytes: edit that file, not this one.
+
+#include "core/io/DemoProject.h"
+
+namespace tekno::core::io
+{
+juce::String demoProjectText()
+{
+    static const unsigned char bytes[] { @TEKNO_DEMO_BYTES@ };
+    return juce::String::fromUTF8 (reinterpret_cast<const char*> (bytes), static_cast<int> (sizeof (bytes)));
+}
+} // namespace tekno::core::io

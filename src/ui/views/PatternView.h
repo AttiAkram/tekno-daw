@@ -95,8 +95,7 @@ public:
     std::function<void()> onLayoutChanged; // the app saves the layout
     static std::optional<View> viewFromName (const juce::String& name);
 
-    static constexpr int stepsPerPage = 16;
-    static constexpr int maxPages = core::Pattern::maxSteps / stepsPerPage;
+    static constexpr int stepsPerBar = 16;
     static constexpr int maxChannels = core::Session::maxChannels;
 
 private:
@@ -107,6 +106,7 @@ private:
         {
             acid,
             sampler,
+            sub,
             mixer, // every channel has these
         };
 
@@ -126,8 +126,8 @@ private:
         std::array<juce::String, maxChannels> channelNames;
         int channels = 0;
         int selectedChannel = 0;
-        std::uint32_t samplers = 0, muted = 0, soloed = 0; // a bit per channel
-        juce::String sampleName;                           // of the selected channel, when it is a sampler
+        std::uint32_t samplers = 0, subs = 0, muted = 0, soloed = 0; // a bit per channel
+        juce::String sampleName;                                     // of the selected channel, when it is a sampler
         int length = 0;
         int selected = 0;
         int playingPattern = 0;
@@ -142,6 +142,11 @@ private:
 
         bool operator== (const Snapshot&) const = default;
         bool isSampler (int channel) const noexcept { return ((samplers >> channel) & 1u) != 0; }
+        bool isSub (int channel) const noexcept { return ((subs >> channel) & 1u) != 0; }
+        Knob::Group groupOf (int channel) const noexcept
+        {
+            return isSampler (channel) ? Knob::Group::sampler : isSub (channel) ? Knob::Group::sub : Knob::Group::acid;
+        }
     };
 
     /** Where something on the rack is: a step, a channel pill, or its mute/solo box. */
@@ -163,6 +168,7 @@ private:
     void timerCallback() override;
     Snapshot takeSnapshot() const;
     void run (const juce::String& command, const core::CommandArgs& args = {});
+    void showAddChannelMenu();
     RackHit rackAt (juce::Point<float> position) const;
     int patternChipAt (juce::Point<float> position) const;
     void selectPattern (int index);
@@ -199,9 +205,11 @@ private:
     ValueChip swingChip, bpmChip, lengthChip;
     juce::TextButton playButton { "play" };
     juce::TextButton sampleButton { "load" };
+    juce::TextButton addChannelButton { "+ channel" }; // under the last channel of the rack
+    juce::TooltipWindow tooltips { this, 600 };        // what a knob does, when the mouse rests on it
     juce::TextButton newButton { "new" }, openButton { "open" }, saveButton { "save" };
     juce::TextEditor renameEditor;
-    std::array<Knob, 13> knobs;
+    std::array<Knob, 17> knobs;
     Terminal terminal;
     bool terminalOpen = false;
     LevelMeters meters;
@@ -240,7 +248,8 @@ private:
     juce::Rectangle<float> terminalArea, rackArea; // rackArea: where the rows are visible
     float rackContentHeight = 0.0f;
     std::array<juce::Rectangle<float>, core::Session::maxPatterns> patternChips;
-    std::array<juce::Rectangle<float>, stepsPerPage> columns; // x and width of each step column
+    std::array<juce::Rectangle<float>, core::Pattern::maxSteps> columns; // x and width of each step column
+    int pageSteps = stepsPerBar; // steps on one page of the rack: whole bars, as many as fit across
     struct RowLayout
     {
         juce::Rectangle<float> pill, mute, solo;
